@@ -18,4 +18,6 @@ Prefer an AI assistant to guide you? Attach [`SETUP-WITH-AI.md`](SETUP-WITH-AI.m
 - **Safety:** it only touches events it created itself, never deletes on a failed or empty read, and never deletes past shifts. Your logins live only in your repository's encrypted GitHub secrets.
 - Each run's **Summary** shows a ✅ / ❌ checklist of anything that needs fixing.
 
+- **Always up to date:** each run uses the latest shared code from this template, so fixes reach your copy automatically. Your secrets never leave your own repository.
+
 This repository is a template. Its own schedule is switched off; only your copy runs.

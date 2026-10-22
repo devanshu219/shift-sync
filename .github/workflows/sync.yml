@@ -34,11 +34,23 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v7
 
+      # Always run the latest shared code, so fixes reach every copy
+      # automatically. Only code files are refreshed, for this run only;
+      # nothing is written back to your repository, and your secrets stay here.
+      # If the download fails, your repository's own copy is used instead.
+      - name: Get the latest Shift Sync code
+        run: |
+          if git clone -q --depth 1 https://github.com/devanshu219/shift-sync.git /tmp/latest; then
+            cp /tmp/latest/*.py /tmp/latest/requirements.txt /tmp/latest/run.sh .
+            echo "Using the latest shared code: $(git -C /tmp/latest log -1 --format='%h %s')"
+          else
+            echo "::warning::Couldn't download the latest code; using this repository's copy."
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -55,24 +67,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-shell
 
-      # The runner already has the libraries the browser needs, so this is
-      # normally a ~6-second download. Only if the browser won't start are
-      # Ubuntu packages installed, capped at 3 minutes (Ubuntu's download
-      # servers sometimes hang). Shift times sync even if this step fails; the
-      # event details are then marked ❌ and retried on the next run.
-      - name: Install the browser
-        timeout-minutes: 5
-        continue-on-error: true
-        run: |
-          python -m playwright install --only-shell chromium
-          if ! python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()"; then
-            echo "The browser needs extra system packages; installing them (3 minutes max) ..."
-            timeout 180 python -m playwright install-deps chromium
-          fi
-
-      # Retries once on a temporary failure (exit 1). Setup problems (exit 2)
-      # and a rejected MLSE or ESS login (exit 3) are NOT retried, so a wrong
-      # password can't lock an account faster.
+      # Installs the browser and runs the sync with a retry (see run.sh).
       - name: Run the sync
         env:
           GCAL_SERVICE_KEY: ${{ secrets.GCAL_SERVICE_KEY }}
@@ -83,10 +78,4 @@ jobs:
           ESS_USER: ${{ secrets.ESS_USER }}
           ESS_PIN: ${{ secrets.ESS_PIN }}
           ROGERS_FORCE_CHECK: ${{ secrets.ROGERS_FORCE_CHECK }}
-        run: |
-          python sync.py && exit 0
-          code=$?
-          if [ "$code" -eq 2 ] || [ "$code" -eq 3 ]; then exit "$code"; fi
-          echo "Run failed (exit $code); retrying once in 60 seconds ..."
-          sleep 60
-          python sync.py
+        run: bash run.sh
