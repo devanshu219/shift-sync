@@ -56,6 +56,10 @@ code,.chip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9e
 .note{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:.95rem}
 .only-mlse,.only-rogers{}
 body[data-job="mlse"] .only-rogers, body[data-job="rogers"] .only-mlse{display:none}
+details.phone summary{font-weight:600;cursor:pointer}
+details.phone ol{padding-left:20px;margin:8px 0 0}
+details.phone li{margin:8px 0}
+details.phone ul{padding-left:18px;margin:4px 0}
 table{border-collapse:collapse;width:100%;font-size:.95rem;margin-top:6px}
 td{border-top:1px solid var(--line);padding:6px 4px;vertical-align:top}
 footer{color:var(--muted);font-size:.9rem;margin-top:26px}
@@ -80,6 +84,27 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
     <p class="hint" id="count">0 of 8 steps done</p>
   </section>
 
+  <details class="card phone" id="phone">
+    <summary>📱 Doing this on a phone?</summary>
+    <p>A computer is easiest, but a phone works if you do these 3 things:</p>
+    <ol>
+      <li><b>Turn on desktop mode in your browser before you start.</b> Google Calendar's settings (making the calendar, the Calendar ID, sharing) don't exist in the Calendar app or the phone version of the site.
+        <ul>
+          <li>iPhone Safari: tap <b>aA</b> in the address bar, then <b>Request Desktop Website</b>.</li>
+          <li>Android Chrome: tap <b>⋮</b>, then tick <b>Desktop site</b>.</li>
+        </ul>
+        Turn it on again on each new site (Google Calendar, Google Cloud, MLSE).</li>
+      <li><b>Copying the key file</b> (the <code>.json</code> from the robot step) is the trickiest part:
+        <ul>
+          <li>iPhone: open the <b>Files</b> app, then <b>Downloads</b>, and tap the <code>.json</code> file to preview it. Press and hold on the text, tap <b>Select All</b>, then <b>Copy</b>.</li>
+          <li>Android: open <b>Files</b>, then <b>Downloads</b>, and open the <code>.json</code> file with a text viewer. Select all, then copy.</li>
+          <li>Paste it as the <code>GCAL_SERVICE_KEY</code> secret. Check it starts with <code>{</code> and ends with <code>}</code>.</li>
+        </ul></li>
+      <li><b>Keep a Notes app open</b> for the 3 things you copy (feed link, Calendar ID, robot email). Switch between apps with the app switcher.</li>
+    </ol>
+    <p class="hint">If anything looks different, finish that step later on a computer. Your ticks on this page are saved.</p>
+  </details>
+
   <section class="card step only-mlse-or-rogers" data-step="logins">
     <input type="checkbox" aria-label="Done">
     <div>
@@ -100,7 +125,7 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
       <div class="body">
         <ol>
           <li>In MLSE WorkForce, click <b>My Calendar</b> (pick your job if it asks).</li>
-          <li>Top right, beside <b>Print Calendar</b>, click <b>Subscribe</b>, and copy the link.</li>
+          <li>Top right, beside <b>Print Calendar</b>, click <b>Subscribe</b>, and copy the link. On a phone, turn on desktop mode if you don't see it.</li>
           <li>Paste it into your Notes app as <b>"Feed link"</b>. You'll need it when adding your private details.</li>
         </ol>
       </div>
@@ -119,6 +144,7 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
           <li>Copy the <b>Calendar ID</b> (it ends with <code>@group.calendar.google.com</code>) into Notes as <b>"Calendar ID"</b>.</li>
         </ol>
         <p class="hint">Keep this tab open. You'll share the calendar two steps from now.</p>
+        <p class="hint">📱 On a phone, turn on desktop mode first (see "Doing this on a phone?" above). The Calendar app can't do this step.</p>
       </div>
     </div>
   </section>
@@ -173,7 +199,7 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
         <a class="btn needs-user" data-href="https://github.com/{u}/shift-sync/settings/secrets/actions/new" target="_blank" rel="noopener">Open "New secret"</a>
         <p>For each one, paste the <b>Name</b>, put the value in <b>Secret</b>, click <b>Add secret</b>, then reopen the button for the next one. Type passwords and PINs by hand.</p>
         <table>
-          <tr><td><span class="chip">GCAL_SERVICE_KEY<button>Copy</button></span></td><td>Open the downloaded <code>.json</code> in Notepad or TextEdit, then select all and copy</td></tr>
+          <tr><td><span class="chip">GCAL_SERVICE_KEY<button>Copy</button></span></td><td>Open the downloaded <code>.json</code> in Notepad or TextEdit, then select all and copy. On a phone: see "Doing this on a phone?" above.</td></tr>
           <tr><td><span class="chip">CALENDAR_ID<button>Copy</button></span></td><td>Calendar ID from Notes</td></tr>
           <tr class="only-mlse"><td><span class="chip">MLSE_ICS_URL<button>Copy</button></span></td><td>Feed link from Notes</td></tr>
           <tr class="only-mlse"><td><span class="chip">MLSE_USER<button>Copy</button></span></td><td>MLSE User ID</td></tr>
@@ -259,6 +285,10 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
       }
     });
   });
+
+  if (window.matchMedia && window.matchMedia("(max-width: 700px)").matches) {
+    document.getElementById("phone").open = true;
+  }
 
   gh.value = store.get("ss-user") || "";
   setUser(gh.value);
