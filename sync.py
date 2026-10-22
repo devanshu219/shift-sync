@@ -296,10 +296,15 @@ def sync_mlse(service, calendar_id):
         check("MLSE login (for event names)", False, "User ID or password rejected")
         return LOGIN_FAILED
     except Exception as err:
-        log.error("Could not read details from MLSE (%s); times are still synced.", err)
-        print("::warning title=MLSE details skipped::Could not read shift details "
-              "this run; the next run will try again.")
-        return OK
+        # Times are already synced. Fail the run visibly rather than skip the
+        # details quietly; these shifts stay on the "needs details" list and
+        # are retried on every run until they get them.
+        log.error("Could not read details from MLSE (%s); times are synced, "
+                  "details will be retried next run.", err)
+        print("::error title=MLSE event details not added yet::Shift times are in "
+              "your calendar. The event names and venues will be added on the next run.")
+        check("MLSE event details", False, "couldn't read MLSE this run; retried next run")
+        return FAILED
 
     added = 0
     for eid, shift in candidates.items():

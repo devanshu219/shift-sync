@@ -55,8 +55,20 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-shell
 
+      # The runner already has the libraries the browser needs, so this is
+      # normally a ~6-second download. Only if the browser won't start are
+      # Ubuntu packages installed, capped at 3 minutes (Ubuntu's download
+      # servers sometimes hang). Shift times sync even if this step fails; the
+      # event details are then marked ❌ and retried on the next run.
       - name: Install the browser
-        run: python -m playwright install --with-deps --only-shell chromium
+        timeout-minutes: 5
+        continue-on-error: true
+        run: |
+          python -m playwright install --only-shell chromium
+          if ! python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()"; then
+            echo "The browser needs extra system packages; installing them (3 minutes max) ..."
+            timeout 180 python -m playwright install-deps chromium
+          fi
 
       # Retries once on a temporary failure (exit 1). Setup problems (exit 2)
       # and a rejected MLSE or ESS login (exit 3) are NOT retried, so a wrong
