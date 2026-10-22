@@ -26,6 +26,10 @@ log = logging.getLogger("sync.mlse_portal")
 class LoginFailed(Exception):
     """MLSE rejected the User ID / password."""
 
+
+# Pages/buttons the last enrichment couldn't find (shown on the checklist).
+MISSING = []
+
 # DOM extraction for the Schedule grid (Panel_5). Values live in each cell's
 # inner field wrapper `title` (or the input value).
 _GRID_JS = """
@@ -126,6 +130,7 @@ def _click_any(ctx, selectors, label, timeout=5000):
                 except Exception:
                     continue
     log.warning("could not find %s", label)
+    MISSING.append(label)
     return False
 
 
@@ -139,6 +144,7 @@ def _loadscreen_frame(page):
 def fetch_enrichment(user, pw, max_date):
     """Return {(iso_date, 'HH:MM'): detail_dict} covering up to `max_date`."""
     result = {}
+    MISSING.clear()
     with sync_playwright() as p:
         browser = p.chromium.launch()
         ctx = browser.new_context()
@@ -177,6 +183,7 @@ def fetch_enrichment(user, pw, max_date):
             frame = _loadscreen_frame(page)
             if not frame:
                 log.error("MLSE: could not find the timesheet frame.")
+                MISSING.append("timesheet Schedule tab")
                 return result
 
             seen_ranges = set()

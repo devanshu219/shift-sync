@@ -314,7 +314,29 @@ def sync_mlse(service, calendar_id):
             gcal.upsert_event(service, calendar_id, build_enriched_body(shift, detail))
             added += 1
     log.info("Added details to %d of %d shift(s).", added, len(candidates))
-    check("MLSE login (for event names)", True, f"details added to {added} shift(s)")
+    if added == 0:
+        # Logged in, but nothing matched: say why instead of a quiet ✅.
+        log.info("Calendar shift times needing details: %s",
+                 sorted((s["start"].date().isoformat(), s["start"].strftime("%H:%M"))
+                        for s in candidates.values())[:6])
+        log.info("Shift times on MLSE's Schedule page: %s", sorted(enrich)[:6])
+        missing = ", ".join(dict.fromkeys(mlse_portal.MISSING))
+        if missing:
+            why = f"couldn't find on MLSE: {missing}"
+        elif enrich:
+            why = (f"MLSE's Schedule page showed {len(enrich)} shift(s) but none "
+                   "matched your calendar's shift times")
+        else:
+            why = "MLSE's Schedule page showed no shifts"
+        log.error("No event details added: %s. Retried next run.", why)
+        print(f"::error title=MLSE event details not added::{why}. "
+              "Shift times are in your calendar.")
+        check("MLSE event details", False, why)
+        return FAILED
+    note = f"details added to {added} of {len(candidates)} shift(s)"
+    if added < len(candidates):
+        note += " (the rest aren't on MLSE's Schedule page yet)"
+    check("MLSE login (for event names)", True, note)
     return OK
 
 
