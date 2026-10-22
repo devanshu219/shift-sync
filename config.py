@@ -88,7 +88,8 @@ MLB_TEAMS = {
 
 # --- Internal ---------------------------------------------------------------
 # Exit codes: GitHub emails you when a run ends with anything other than 0.
-OK, FAILED, LOGIN_FAILED = 0, 1, 3
+# 2 (setup problem) and 3 (login rejected) are not retried by the workflow.
+OK, FAILED, SETUP_PROBLEM, LOGIN_FAILED = 0, 1, 2, 3
 
 # Tag stamped on every event this system creates. It only ever reads, updates
 # or deletes events carrying this tag, so events you add by hand are safe.

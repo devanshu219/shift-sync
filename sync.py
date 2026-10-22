@@ -19,7 +19,9 @@ Built-in safety:
   * If the feed suddenly shows no upcoming shifts, nothing is deleted.
   * Passwords and keys come from GitHub secrets and are never printed.
 
-Exit codes: 0 = OK, 1 = something broke, 3 = MLSE or ESS rejected the login.
+Exit codes: 0 = OK, 1 = something broke (retried once), 2 = a setup problem
+(missing secret, bad key, calendar not shared), 3 = MLSE or ESS rejected the
+login.
 GitHub emails you when a run ends with anything other than 0.
 """
 
@@ -49,6 +51,7 @@ log = logging.getLogger("sync")
 
 TZ = ZoneInfo(config.TIMEZONE)
 OK, FAILED, LOGIN_FAILED = config.OK, config.FAILED, config.LOGIN_FAILED
+SETUP_PROBLEM = config.SETUP_PROBLEM
 
 # A plain ✅ / ❌ checklist, shown on the GitHub run page (Summary tab) and at
 # the end of the log, so setup problems are easy to spot.
@@ -310,20 +313,33 @@ def sync_mlse(service, calendar_id):
     return OK
 
 
+def not_set_up_yet():
+    """A fresh copy with no secrets at all: stay quiet on the schedule
+    (no failure emails every hour) until the person adds their secrets."""
+    names = ("GCAL_SERVICE_KEY", "CALENDAR_ID", "MLSE_ICS_URL", "ESS_USER", "ESS_PIN")
+    return (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+            and not any((os.environ.get(n) or "").strip() for n in names))
+
+
 def run():
+    if not_set_up_yet():
+        log.info("No secrets added yet, so there's nothing to sync. Finish setup, "
+                 "then run it by hand once from the Actions tab.")
+        check("Setup", None, "no secrets yet; scheduled runs wait quietly")
+        return OK
     if not check_settings():
-        return FAILED
+        return SETUP_PROBLEM
     service = gcal.get_service()
     check("Google robot key (GCAL_SERVICE_KEY)", bool(service),
           "" if service else "re-copy the whole .json file")
     if not service:
-        return FAILED
+        return SETUP_PROBLEM
     calendar_id = gcal.check_calendar(service)
     check("Calendar shared with the robot email", bool(calendar_id),
           "" if calendar_id else f"share it with {gcal.service_account_email}, "
           "'Make changes to events', and check CALENDAR_ID")
     if not calendar_id:
-        return FAILED
+        return SETUP_PROBLEM
     codes = []
     for name, sync_source in (("MLSE", sync_mlse), ("Rogers", rogers.sync_rogers)):
         try:
