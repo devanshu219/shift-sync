@@ -350,7 +350,7 @@ def run():
     rogers_set = all((os.environ.get(n) or "").strip() for n in ("ESS_USER", "ESS_PIN"))
     if rogers_set:
         check("Rogers ESS", codes[1] == OK, {
-            OK: "OK (in the off-season it checks at 10 AM and 4 PM)",
+            OK: "OK; in the off-season it checks at 10 AM and 4 PM",
             LOGIN_FAILED: "employee number or PIN rejected",
         }.get(codes[1], "see the log above"))
     return LOGIN_FAILED if LOGIN_FAILED in codes else (FAILED if FAILED in codes else OK)
