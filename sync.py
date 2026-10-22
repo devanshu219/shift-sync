@@ -1,0 +1,354 @@
+"""
+Shift Sync: copies your MLSE and Rogers Centre work shifts into a Google
+Calendar. Each source is optional and runs independently: a problem with one
+never stops the other.
+
+MLSE, every run:
+  1. Reads your personal MLSE calendar feed (shift times).
+  2. Adds, moves or removes "MLSE Shift" events in your Google Calendar.
+  3. Only when needed, logs in to MLSE WorkForce to add the event name, venue
+     and role to upcoming shifts. A brand-new shift gets its details on the
+     NEXT run, so the login happens as rarely as possible.
+
+Rogers Centre: see rogers.py.
+
+Built-in safety:
+  * Only events this system created (tagged) are ever touched.
+  * A broken or empty feed never deletes anything.
+  * Shifts that already happened are never deleted.
+  * If the feed suddenly shows no upcoming shifts, nothing is deleted.
+  * Passwords and keys come from GitHub secrets and are never printed.
+
+Exit codes: 0 = OK, 1 = something broke, 3 = MLSE or ESS rejected the login.
+GitHub emails you when a run ends with anything other than 0.
+"""
+
+import datetime as dt
+import hashlib
+import logging
+import os
+import sys
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import requests
+from icalendar import Calendar
+
+import config
+import gcal
+import mlse_portal
+import rogers
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-7s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("sync")
+
+TZ = ZoneInfo(config.TIMEZONE)
+OK, FAILED, LOGIN_FAILED = config.OK, config.FAILED, config.LOGIN_FAILED
+
+# A plain ✅ / ❌ checklist, shown on the GitHub run page (Summary tab) and at
+# the end of the log, so setup problems are easy to spot.
+CHECKS = []
+
+
+def check(name, ok, note=""):
+    """ok: True = ✅, False = ❌, None = ⏭️ (not set up / not needed)."""
+    CHECKS.append((name, ok, note))
+
+
+def write_summary():
+    icon = {True: "✅", False: "❌", None: "⏭️"}
+    log.info("Checklist:")
+    for name, ok, note in CHECKS:
+        log.info("  %s %s%s", icon[ok], name, f" ({note})" if note else "")
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    rows = [f"| {icon[ok]} | {name} | {note} |" for name, ok, note in CHECKS]
+    with open(path, "a") as f:
+        f.write("## Shift Sync checklist\n\n| | Check | Note |\n|---|---|---|\n"
+                + "\n".join(rows) + "\n")
+
+
+def check_settings():
+    """Fail early, in plain words, if a GitHub secret is missing."""
+    has = lambda n: bool((os.environ.get(n) or "").strip())
+    for n in ("GCAL_SERVICE_KEY", "CALENDAR_ID"):
+        check(f"Secret {n}", has(n), "" if has(n) else "missing: add it in Settings > Secrets")
+    for group, names in (("MLSE", ("MLSE_ICS_URL", "MLSE_USER", "MLSE_PASS")),
+                         ("Rogers", ("ESS_USER", "ESS_PIN"))):
+        if not any(has(n) for n in names):
+            check(f"{group} secrets", None, "not set up, skipped")
+            continue
+        for n in names:
+            check(f"Secret {n}", has(n), "" if has(n) else "missing")
+    missing = [n for n in ("GCAL_SERVICE_KEY", "CALENDAR_ID") if not has(n)]
+    if not has("MLSE_ICS_URL") and not (has("ESS_USER") and has("ESS_PIN")):
+        missing.append("MLSE_ICS_URL (for MLSE) or ESS_USER + ESS_PIN (for Rogers)")
+    if missing:
+        log.error("Missing GitHub secret(s): %s. Add them in your repository: "
+                  "Settings > Secrets and variables > Actions.", ", ".join(missing))
+        return False
+    if config.MLSE_ICS_URL and not config.MLSE_ICS_URL.startswith("https://"):
+        log.error("MLSE_ICS_URL must be the full feed link starting with https:// "
+                  "(re-copy it from MLSE WorkForce).")
+        return False
+    return True
+
+
+def _as_toronto(value):
+    """Normalise an ICS date/datetime to a timezone-aware Toronto datetime."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=TZ)
+        return value.astimezone(TZ)
+    return datetime.combine(value, dt.time.min, tzinfo=TZ)
+
+
+def fetch_mlse_shifts():
+    """Download and parse the MLSE feed. Raises on any failure, so a broken
+    feed is never mistaken for "no shifts"."""
+    log.info("Fetching MLSE feed ...")
+    last_err = None
+    resp = None
+    # MLSE answers "400 Bad Request" if the same feed is downloaded again
+    # within ~30 seconds, so retries wait 35 seconds.
+    for attempt in range(1, 4):
+        try:
+            resp = requests.get(config.MLSE_ICS_URL, timeout=30)
+            resp.raise_for_status()
+            break
+        except Exception as err:
+            last_err = err
+            log.warning("Feed attempt %d/3 failed: %s", attempt, type(err).__name__)
+            resp = None
+            if attempt < 3:
+                time.sleep(35)
+    if resp is None:
+        raise last_err
+    if b"BEGIN:VCALENDAR" not in resp.content[:2000]:
+        raise ValueError("the feed link did not return a calendar (link wrong or expired)")
+    cal = Calendar.from_ical(resp.content)
+
+    shifts = []
+    for comp in cal.walk("VEVENT"):
+        dtstart = comp.get("dtstart")
+        if dtstart is None:
+            continue
+        start = _as_toronto(dtstart.dt)
+        dtend = comp.get("dtend")
+        end = _as_toronto(dtend.dt) if dtend is not None else start + dt.timedelta(hours=4)
+        shifts.append({
+            "uid": str(comp.get("uid", "")).strip(),
+            "summary": str(comp.get("summary", "")).strip(),
+            "start": start,
+            "end": end,
+        })
+    log.info("Feed parsed: %d shift(s) found.", len(shifts))
+    return shifts
+
+
+def feed_hash(shift):
+    """Fingerprint of a shift's times; changes if MLSE moves the shift."""
+    raw = shift["start"].isoformat() + "|" + shift["end"].isoformat()
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
+def build_timeonly_body(shift):
+    """A time-only event; details are added on a later run."""
+    return {
+        "id": gcal.make_event_id(config.SOURCE, shift["start"]),
+        "summary": "MLSE Shift",
+        "description": (
+            "Synced from the MLSE schedule feed (time only).\n"
+            f"Feed text: {shift['summary'] or '(none)'}\n"
+            "Venue and event details arrive on a later run."
+        ),
+        "start": {"dateTime": shift["start"].isoformat(), "timeZone": config.TIMEZONE},
+        "end": {"dateTime": shift["end"].isoformat(), "timeZone": config.TIMEZONE},
+        "extendedProperties": {
+            "private": {
+                "managedBy": config.MANAGED_TAG,
+                "source": config.SOURCE,
+                "feedUid": shift["uid"],
+                "feedHash": feed_hash(shift),
+                "enriched": "no",
+            }
+        },
+    }
+
+
+def build_enriched_body(shift, detail):
+    """The time event upgraded with event name, venue and role."""
+    body = build_timeonly_body(shift)
+    body["summary"] = mlse_portal.build_summary(detail)
+    body["description"] = mlse_portal.build_description(detail)
+    priv = body["extendedProperties"]["private"]
+    priv["enriched"] = "yes"
+    priv["enrichVer"] = config.ENRICH_VERSION
+    venue_name = mlse_portal.venue_full(detail.get("venue_code", "")) or detail.get("venue", "")
+    location = config.VENUE_LOCATIONS.get(venue_name)
+    if location:
+        body["location"] = location
+    return body
+
+
+
+def sync_mlse(service, calendar_id):
+    if not config.MLSE_ICS_URL:
+        log.info("MLSE_ICS_URL not set; skipping MLSE.")
+        return OK
+
+    # 1. Read the feed. If this fails, stop WITHOUT deleting anything.
+    try:
+        shifts = fetch_mlse_shifts()
+    except Exception as err:
+        log.error("MLSE feed failed (%s). Calendar left untouched.", err)
+        check("MLSE feed link", False, "re-copy it from MLSE > My Calendar > Subscribe")
+        return FAILED
+    check("MLSE feed link", True, f"{len(shifts)} shift(s) found")
+
+    now = datetime.now(TZ)
+    desired = {gcal.make_event_id(config.SOURCE, s["start"]): s for s in shifts}
+    existing = gcal.list_managed_events(service, calendar_id)
+    log.info("Calendar holds %d MLSE event(s); feed has %d shift(s).",
+             len(existing), len(desired))
+
+    # 2. Put every shift on the calendar with its time. Unchanged shifts are
+    #    left alone, which keeps the details already added to them.
+    created = updated = unchanged = deleted = 0
+    for eid, shift in desired.items():
+        ex = existing.get(eid)
+        priv = ((ex.get("extendedProperties") or {}).get("private") or {}) if ex else {}
+        if ex and priv.get("feedHash") == feed_hash(shift):
+            unchanged += 1
+            continue
+        result = gcal.upsert_event(service, calendar_id, build_timeonly_body(shift))
+        created += result == "created"
+        updated += result == "updated"
+
+    # 3. Remove upcoming shifts that MLSE took away. Never past shifts, and
+    #    never when the feed looks broken.
+    future_feed = [s for s in shifts if s["start"] >= now]
+    future_cal = [e for e in existing
+                  if e not in desired and (gcal.event_start(existing[e], TZ) or now) >= now]
+    if not desired:
+        if existing:
+            log.warning("Feed returned 0 shifts but %d are on the calendar; keeping "
+                        "them (an empty feed is treated as a failure).", len(existing))
+    elif not future_feed and len(future_cal) >= 3:
+        log.warning("Feed shows no upcoming shifts but %d are on the calendar; "
+                    "keeping them in case the feed is incomplete.", len(future_cal))
+    else:
+        for eid in future_cal:
+            gcal.delete_event(service, calendar_id, eid)
+            deleted += 1
+
+    log.info("MLSE feed sync: %d created, %d updated, %d unchanged, %d deleted.",
+             created, updated, unchanged, deleted)
+
+    # 4. Add details. Only shifts that were ALREADY on the calendar before this
+    #    run, upcoming, and not yet detailed. No candidates = no login at all.
+    today = now.date()
+    candidates = {}
+    for eid, shift in desired.items():
+        ex = existing.get(eid)
+        if not ex:
+            continue  # brand-new this run; details on the next run
+        priv = (ex.get("extendedProperties") or {}).get("private") or {}
+        done = (priv.get("enriched") == "yes"
+                and priv.get("feedHash") == feed_hash(shift)
+                and priv.get("enrichVer") == config.ENRICH_VERSION)
+        if done or shift["start"].date() < today:
+            continue
+        candidates[eid] = shift
+
+    if not candidates:
+        log.info("No shifts need details; skipping the MLSE login.")
+        check("MLSE login (for event names)", None, "not needed this run")
+        return OK
+
+    user = (os.environ.get("MLSE_USER") or "").strip()
+    pw = (os.environ.get("MLSE_PASS") or "").rstrip("\r\n")
+    if not user or not pw:
+        log.warning("%d shift(s) need details but MLSE_USER / MLSE_PASS are not "
+                    "set; leaving them as time-only.", len(candidates))
+        return OK
+
+    max_date = max(s["start"].date() for s in candidates.values())
+    log.info("Adding details to %d shift(s) via MLSE WorkForce (through %s) ...",
+             len(candidates), max_date)
+    try:
+        enrich = mlse_portal.fetch_enrichment(user, pw, max_date)
+    except mlse_portal.LoginFailed:
+        log.error("MLSE login failed: MLSE says the User ID or password is wrong.")
+        print("::error title=MLSE login failed::Log in by hand at "
+              f"{config.MLSE_PORTAL_URL} (type it, no autofill). If that works, "
+              "save the same password again as the MLSE_PASS secret. Shift times "
+              "are still syncing.")
+        check("MLSE login (for event names)", False, "User ID or password rejected")
+        return LOGIN_FAILED
+    except Exception as err:
+        log.error("Could not read details from MLSE (%s); times are still synced.", err)
+        print("::warning title=MLSE details skipped::Could not read shift details "
+              "this run; the next run will try again.")
+        return OK
+
+    added = 0
+    for eid, shift in candidates.items():
+        key = (shift["start"].date().isoformat(), shift["start"].strftime("%H:%M"))
+        detail = enrich.get(key)
+        if detail:
+            gcal.upsert_event(service, calendar_id, build_enriched_body(shift, detail))
+            added += 1
+    log.info("Added details to %d of %d shift(s).", added, len(candidates))
+    check("MLSE login (for event names)", True, f"details added to {added} shift(s)")
+    return OK
+
+
+def run():
+    if not check_settings():
+        return FAILED
+    service = gcal.get_service()
+    check("Google robot key (GCAL_SERVICE_KEY)", bool(service),
+          "" if service else "re-copy the whole .json file")
+    if not service:
+        return FAILED
+    calendar_id = gcal.check_calendar(service)
+    check("Calendar shared with the robot email", bool(calendar_id),
+          "" if calendar_id else f"share it with {gcal.service_account_email}, "
+          "'Make changes to events', and check CALENDAR_ID")
+    if not calendar_id:
+        return FAILED
+    codes = []
+    for name, sync_source in (("MLSE", sync_mlse), ("Rogers", rogers.sync_rogers)):
+        try:
+            codes.append(sync_source(service, calendar_id))
+        except Exception as err:  # one source must never stop the other
+            log.error("%s sync crashed (%s).", name, err)
+            codes.append(FAILED)
+    rogers_set = all((os.environ.get(n) or "").strip() for n in ("ESS_USER", "ESS_PIN"))
+    if rogers_set:
+        check("Rogers ESS", codes[1] == OK, {
+            OK: "OK (in the off-season it checks at 10 AM and 4 PM)",
+            LOGIN_FAILED: "employee number or PIN rejected",
+        }.get(codes[1], "see the log above"))
+    return LOGIN_FAILED if LOGIN_FAILED in codes else (FAILED if FAILED in codes else OK)
+
+
+def main():
+    log.info("=== Shift Sync starting ===")
+    try:
+        code = run()
+    finally:
+        write_summary()
+    log.info("=== Done ===" if code == OK else "=== Finished with a problem (see above) ===")
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    main()

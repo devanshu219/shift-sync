@@ -1,0 +1,79 @@
+name: Sync work shifts
+
+# Tiered schedule, Toronto time, to stay far inside GitHub's 2,000 free
+# minutes per month:
+#   10AM-10PM: every hour   7AM + 9AM: morning   11PM + 3AM: overnight
+# GitHub schedules are in UTC only, so each tier is listed twice: once for
+# summer time (EDT, April-October) and once for winter time (EST, Nov-March).
+# GitHub sometimes runs these late or skips some; that is normal.
+# To run it by hand: Actions tab > "Sync work shifts" > "Run workflow".
+on:
+  schedule:
+    # --- EDT (UTC-4), April-October ---
+    - cron: "0 3,7 * 4-10 *"              # night: 11PM, 3AM
+    - cron: "0 11,13 * 4-10 *"            # morning: 7AM, 9AM
+    - cron: "0 14-23,0,1,2 * 4-10 *"      # day: 10AM-10PM, hourly
+    # --- EST (UTC-5), November-March ---
+    - cron: "0 4,8 * 11,12,1,2,3 *"       # night: 11PM, 3AM
+    - cron: "0 12,14 * 11,12,1,2,3 *"     # morning: 7AM, 9AM
+    - cron: "0 15-23,0,1,2,3 * 11,12,1,2,3 *"  # day: 10AM-10PM, hourly
+  workflow_dispatch:
+
+# Never let two runs overlap.
+concurrency:
+  group: mlse-shift-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # The shared template itself never runs; only your own copy does.
+    if: github.repository != 'devanshu219/shift-sync'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8  # hard ceiling: a stuck run can never burn your free minutes
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Each Playwright version needs its own browser build, so the cache is
+      # keyed on the version pip actually installed.
+      - name: Get installed Playwright version
+        id: pw
+        run: echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-shell
+
+      - name: Install the browser
+        run: python -m playwright install --with-deps --only-shell chromium
+
+      # Retries once on a temporary failure. A rejected MLSE or ESS login
+      # (exit 3) is NOT retried, so a wrong password can't lock an account faster.
+      - name: Run the sync
+        env:
+          GCAL_SERVICE_KEY: ${{ secrets.GCAL_SERVICE_KEY }}
+          CALENDAR_ID: ${{ secrets.CALENDAR_ID }}
+          MLSE_ICS_URL: ${{ secrets.MLSE_ICS_URL }}
+          MLSE_USER: ${{ secrets.MLSE_USER }}
+          MLSE_PASS: ${{ secrets.MLSE_PASS }}
+          ESS_USER: ${{ secrets.ESS_USER }}
+          ESS_PIN: ${{ secrets.ESS_PIN }}
+          ROGERS_FORCE_CHECK: ${{ secrets.ROGERS_FORCE_CHECK }}
+        run: |
+          python sync.py && exit 0
+          code=$?
+          if [ "$code" -eq 3 ]; then exit 3; fi
+          echo "Run failed (exit $code); retrying once in 60 seconds ..."
+          sleep 60
+          python sync.py

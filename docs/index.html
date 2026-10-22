@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shift Sync Setup</title>
+<meta name="description" content="Put your MLSE and Rogers Centre shifts into Google Calendar automatically. About 15–20 minutes, once.">
+<style>
+:root{
+  --bg:#f6f5f2; --card:#ffffff; --ink:#1d1c1a; --muted:#6b6862; --line:#e4e1da;
+  --accent:#1f6f4a; --accent-ink:#ffffff; --soft:#e8f2ec; --warn:#8a5a00; --warn-bg:#fff4dd;
+  --done:#9a978f;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141413; --card:#1e1d1b; --ink:#eeece6; --muted:#a29f97; --line:#34322e;
+    --accent:#4fbf8b; --accent-ink:#0f1a14; --soft:#1d2b23; --warn:#f0c46a; --warn-bg:#2d2615;
+    --done:#77746d;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:760px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.9rem;line-height:1.2;margin:0 0 6px}
+.lede{color:var(--muted);margin:0 0 22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 18px;margin:0 0 14px}
+.setup label{display:block;font-weight:600;margin:0 0 6px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.choice{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:999px;
+  padding:8px 14px;font:inherit;cursor:pointer}
+.choice[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+input[type=text]{font:inherit;padding:9px 12px;border-radius:10px;border:1px solid var(--line);
+  background:var(--bg);color:var(--ink);width:100%;max-width:320px}
+.hint{color:var(--muted);font-size:.92rem;margin:6px 0 0}
+.progress{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:6px 0 2px}
+.progress > div{height:100%;width:0;background:var(--accent);transition:width .25s}
+.step{display:grid;grid-template-columns:28px 1fr;gap:12px}
+.step input[type=checkbox]{width:22px;height:22px;margin:3px 0 0;accent-color:var(--accent);cursor:pointer}
+.step h2{font-size:1.1rem;margin:0}
+.time{color:var(--muted);font-weight:400;font-size:.9rem}
+.step.done h2{color:var(--done);text-decoration:line-through}
+.step.done .body{display:none}
+.body{margin-top:8px}
+.body ol{margin:6px 0 0;padding-left:20px}
+.body li{margin:4px 0}
+a.btn{display:inline-block;background:var(--accent);color:var(--accent-ink);text-decoration:none;
+  padding:8px 14px;border-radius:10px;font-weight:600;margin:4px 0}
+a.btn.off{opacity:.45;pointer-events:none}
+a{color:var(--accent)}
+code,.chip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--soft);border-radius:8px;
+  padding:4px 6px 4px 10px;margin:3px 4px 3px 0}
+.chip button{font:inherit;font-size:.8rem;border:0;border-radius:6px;padding:3px 8px;cursor:pointer;
+  background:var(--card);color:var(--ink)}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:.95rem}
+.only-mlse,.only-rogers{}
+body[data-job="mlse"] .only-rogers, body[data-job="rogers"] .only-mlse{display:none}
+table{border-collapse:collapse;width:100%;font-size:.95rem;margin-top:6px}
+td{border-top:1px solid var(--line);padding:6px 4px;vertical-align:top}
+footer{color:var(--muted);font-size:.9rem;margin-top:26px}
+</style>
+</head>
+<body data-job="both">
+<main>
+  <h1>Your shifts in Google Calendar, automatically</h1>
+  <p class="lede">MLSE and Rogers Centre shifts show up in your Google Calendar with the event name and venue, and update by themselves. Free. About 15–20 minutes, once. Tick each step as you go; this page remembers your progress.</p>
+
+  <section class="card setup">
+    <label>1. Where do you work?</label>
+    <div class="row" role="group" aria-label="Where do you work">
+      <button class="choice" data-job="mlse">MLSE</button>
+      <button class="choice" data-job="rogers">Rogers Centre</button>
+      <button class="choice" data-job="both" aria-pressed="true">Both</button>
+    </div>
+    <label for="gh" style="margin-top:14px">2. Your GitHub username</label>
+    <input id="gh" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. jane-doe">
+    <p class="hint">No GitHub account? <a href="https://github.com/signup" target="_blank" rel="noopener">Create a free one</a> (2 min), then type the username here. It only fills in the buttons below; it isn't sent anywhere.</p>
+    <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+    <p class="hint" id="count">0 of 8 steps done</p>
+  </section>
+
+  <section class="card step only-mlse-or-rogers" data-step="logins">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Check your work logins <span class="time">· 2 min</span></h2>
+      <div class="body">
+        <p>Type them by hand (no autofill). The sync uses exactly what works here.</p>
+        <p class="only-mlse"><a class="btn" href="https://mlse.wta-ca3.wfs.cloud/workforce/Desktop.do" target="_blank" rel="noopener">Open MLSE WorkForce</a> Log in with your User ID and password.</p>
+        <p class="only-rogers"><a class="btn" href="https://ess.abimm.com/ABIMM_ASP/Request.aspx" target="_blank" rel="noopener">Open Rogers ESS</a> Venue <code>LEGENDSTBJ</code>, then your employee number and PIN, then <b>View My Schedule</b>.</p>
+        <p class="note only-rogers">Supervisor or a different ESS screen? If your shifts aren't under "View My Schedule", the Rogers part may not read them. MLSE still works.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card step only-mlse" data-step="feed">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Copy your MLSE calendar link <span class="time">· 1 min</span></h2>
+      <div class="body">
+        <ol>
+          <li>In MLSE WorkForce, click <b>My Calendar</b> (pick your job if it asks).</li>
+          <li>Top right, beside <b>Print Calendar</b>, click <b>Subscribe</b>, and copy the link.</li>
+          <li>Paste it into your Notes app as <b>"Feed link"</b>. You'll need it when adding your private details.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section class="card step" data-step="calendar">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Make a "Work Shifts" calendar <span class="time">· 1 min</span></h2>
+      <div class="body">
+        <a class="btn" href="https://calendar.google.com/calendar/u/0/r/settings/createcalendar" target="_blank" rel="noopener">Create a new Google Calendar</a>
+        <ol>
+          <li>Name it <b>Work Shifts</b> and click <b>Create calendar</b>.</li>
+          <li>Click it in the left list, then scroll to <b>Integrate calendar</b>.</li>
+          <li>Copy the <b>Calendar ID</b> (it ends with <code>@group.calendar.google.com</code>) into Notes as <b>"Calendar ID"</b>.</li>
+        </ol>
+        <p class="hint">Keep this tab open. You'll share the calendar two steps from now.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card step" data-step="robot">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Create the Google "robot" that writes to your calendar <span class="time">· 5 min</span></h2>
+      <div class="body">
+        <p>Use the <b>same Google account</b>. No credit card needed; skip any free-trial offer. Do these four buttons in order:</p>
+        <ol>
+          <li><a class="btn" href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">① Create project</a> Name it <code>shift-sync</code>, click <b>Create</b>, then wait about 10 seconds.</li>
+          <li><a class="btn" href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">② Turn on Calendar API</a> Check the top bar shows <b>shift-sync</b>, then click <b>Enable</b>.</li>
+          <li><a class="btn" href="https://console.cloud.google.com/iam-admin/serviceaccounts/create" target="_blank" rel="noopener">③ Create the robot</a> Name it <code>calendar-sync</code>, then <b>Create and continue</b>, <b>Continue</b>, <b>Done</b>.</li>
+          <li><a class="btn" href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener">④ Get its key</a> Click the robot's email, then <b>Keys</b>, <b>Add key</b>, <b>Create new key</b>, <b>JSON</b>, <b>Create</b>. A <code>.json</code> file downloads. Also copy the robot's email (ends with <code>.iam.gserviceaccount.com</code>) into Notes.</li>
+        </ol>
+        <p class="note">"Key creation is disabled"? You're on a work or school Google account. Use a personal @gmail.com account instead.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card step" data-step="share">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Let the robot write to "Work Shifts" <span class="time">· 1 min</span></h2>
+      <div class="body">
+        <a class="btn" href="https://calendar.google.com/calendar/u/0/r/settings" target="_blank" rel="noopener">Open Calendar settings</a>
+        <ol>
+          <li>Click <b>Work Shifts</b> on the left, then <b>Share with specific people or groups</b>, then <b>Add people and groups</b>.</li>
+          <li>Paste the robot email, set <b>Make changes to events</b>, then <b>Send</b>. A "can't send email" warning is fine.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section class="card step" data-step="copy">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Get your own copy of the sync <span class="time">· 30 sec</span></h2>
+      <div class="body">
+        <a class="btn" target="_blank" rel="noopener" href="https://github.com/new?owner=@me&amp;template_owner=devanshu219&amp;template_name=shift-sync&amp;name=shift-sync&amp;visibility=private&amp;description=My+work+shifts+to+Google+Calendar">Create my copy</a>
+        <p>Make sure <b>Private</b> is selected (it keeps your shifts private), then click <b>Create repository</b>. All the code is already in it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card step" data-step="secrets">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Add your private details <span class="time">· 3 min</span></h2>
+      <div class="body">
+        <a class="btn needs-user" data-href="https://github.com/{u}/shift-sync/settings/secrets/actions/new" target="_blank" rel="noopener">Open "New secret"</a>
+        <p>For each one, paste the <b>Name</b>, put the value in <b>Secret</b>, click <b>Add secret</b>, then reopen the button for the next one. Type passwords and PINs by hand.</p>
+        <table>
+          <tr><td><span class="chip">GCAL_SERVICE_KEY<button>Copy</button></span></td><td>Open the downloaded <code>.json</code> in Notepad or TextEdit, then select all and copy</td></tr>
+          <tr><td><span class="chip">CALENDAR_ID<button>Copy</button></span></td><td>Calendar ID from Notes</td></tr>
+          <tr class="only-mlse"><td><span class="chip">MLSE_ICS_URL<button>Copy</button></span></td><td>Feed link from Notes</td></tr>
+          <tr class="only-mlse"><td><span class="chip">MLSE_USER<button>Copy</button></span></td><td>MLSE User ID</td></tr>
+          <tr class="only-mlse"><td><span class="chip">MLSE_PASS<button>Copy</button></span></td><td>MLSE password</td></tr>
+          <tr class="only-rogers"><td><span class="chip">ESS_USER<button>Copy</button></span></td><td>ESS employee number</td></tr>
+          <tr class="only-rogers"><td><span class="chip">ESS_PIN<button>Copy</button></span></td><td>ESS PIN</td></tr>
+        </table>
+        <p class="hint">Afterwards you can delete the <code>.json</code> file from Downloads and clear your Notes.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card step" data-step="run">
+    <input type="checkbox" aria-label="Done">
+    <div>
+      <h2>Safety cap, then run it <span class="time">· 3 min</span></h2>
+      <div class="body">
+        <ol>
+          <li><a class="btn" href="https://github.com/settings/billing/budgets/new" target="_blank" rel="noopener">$0 safety cap</a> Choose <b>Product-level budget</b>, then <b>Actions</b>, then <b>Next</b>. Set the amount to <code>0</code>, tick <b>Stop usage when budget limit is reached</b>, then <b>Create budget</b>. GitHub can then never charge you.</li>
+          <li><a class="btn needs-user" data-href="https://github.com/{u}/shift-sync/actions/workflows/sync.yml" target="_blank" rel="noopener">Run it now</a> If asked, enable workflows. Then <b>Run workflow</b>, then <b>Run workflow</b>.</li>
+          <li>After about 2 minutes, open the run. Its <b>Summary</b> shows a ✅ / ❌ checklist of anything that still needs fixing.</li>
+          <li class="only-mlse">MLSE: run it once more a minute later. The second run adds the event names.</li>
+        </ol>
+        <p class="note only-rogers">Rogers off-season: it only checks ESS at 10 AM and 4 PM. To test now, add a secret <code>ROGERS_FORCE_CHECK</code> with value <code>1</code>, run, then delete that secret.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>After this it runs by itself: hourly from 10 AM to 10 PM, plus 7 AM, 9 AM, 11 PM and 3 AM, using well under GitHub's free 2,000 minutes a month. If you change your MLSE password or ESS PIN, update that secret. Stuck? Open the run's Summary, or send whoever shared this page a screenshot of the ❌.</p>
+  </footer>
+</main>
+<script>
+(function(){
+  var store = {
+    get: function(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+    set: function(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+  };
+  var body = document.body, gh = document.getElementById("gh");
+  var steps = Array.prototype.slice.call(document.querySelectorAll(".step"));
+
+  function visibleSteps(){ return steps.filter(function(s){ return s.offsetParent !== null; }); }
+  function refresh(){
+    var vis = visibleSteps(), done = vis.filter(function(s){ return s.classList.contains("done"); }).length;
+    document.getElementById("bar").style.width = (vis.length ? 100*done/vis.length : 0) + "%";
+    document.getElementById("count").textContent = done + " of " + vis.length + " steps done";
+  }
+  function setJob(job){
+    body.setAttribute("data-job", job); store.set("ss-job", job);
+    document.querySelectorAll(".choice").forEach(function(b){
+      b.setAttribute("aria-pressed", b.getAttribute("data-job") === job ? "true" : "false");
+    });
+    refresh();
+  }
+  function setUser(u){
+    u = (u || "").trim().replace(/^@/, "");
+    store.set("ss-user", u);
+    document.querySelectorAll(".needs-user").forEach(function(a){
+      if (u) { a.href = a.getAttribute("data-href").replace("{u}", encodeURIComponent(u)); a.classList.remove("off"); }
+      else { a.removeAttribute("href"); a.classList.add("off"); }
+    });
+  }
+
+  document.querySelectorAll(".choice").forEach(function(b){
+    b.addEventListener("click", function(){ setJob(b.getAttribute("data-job")); });
+  });
+  gh.addEventListener("input", function(){ setUser(gh.value); });
+
+  steps.forEach(function(s){
+    var cb = s.querySelector("input[type=checkbox]"), key = "ss-step-" + s.getAttribute("data-step");
+    if (store.get(key) === "1") { cb.checked = true; s.classList.add("done"); }
+    cb.addEventListener("change", function(){
+      s.classList.toggle("done", cb.checked); store.set(key, cb.checked ? "1" : "0"); refresh();
+    });
+  });
+
+  document.querySelectorAll(".chip button").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var text = btn.parentNode.firstChild.textContent.trim();
+      var done = function(){ btn.textContent = "Copied"; setTimeout(function(){ btn.textContent = "Copy"; }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function(){});
+      }
+    });
+  });
+
+  gh.value = store.get("ss-user") || "";
+  setUser(gh.value);
+  setJob(store.get("ss-job") || "both");
+})();
+</script>
+</body>
+</html>
