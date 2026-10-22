@@ -78,4 +78,5 @@ jobs:
           ESS_USER: ${{ secrets.ESS_USER }}
           ESS_PIN: ${{ secrets.ESS_PIN }}
           ROGERS_FORCE_CHECK: ${{ secrets.ROGERS_FORCE_CHECK }}
-        run: bash run.sh
+        run: |
+          if [ -f run.sh ]; then bash run.sh; else python sync.py; fi
