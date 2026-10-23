@@ -126,6 +126,17 @@ def upsert_event(service, calendar_id, body):
         raise
 
 
+def set_private_prop(service, calendar_id, event_id, key, value):
+    """Add one private (hidden) key to an event, keeping everything else."""
+    ev = service.events().get(calendarId=calendar_id, eventId=event_id).execute(
+        num_retries=RETRIES)
+    private = dict(((ev.get("extendedProperties") or {}).get("private") or {}))
+    private[key] = value
+    service.events().patch(calendarId=calendar_id, eventId=event_id,
+                           body={"extendedProperties": {"private": private}}).execute(
+        num_retries=RETRIES)
+
+
 def delete_event(service, calendar_id, event_id):
     try:
         service.events().delete(calendarId=calendar_id, eventId=event_id).execute(

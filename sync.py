@@ -82,16 +82,17 @@ def check_settings():
     has = lambda n: bool((os.environ.get(n) or "").strip())
     for n in ("GCAL_SERVICE_KEY", "CALENDAR_ID"):
         check(f"Secret {n}", has(n), "" if has(n) else "missing: add it in Settings > Secrets")
-    for group, names in (("MLSE", ("MLSE_ICS_URL", "MLSE_USER", "MLSE_PASS")),
+    for group, names in (("MLSE", ("MLSE_USER", "MLSE_PASS")),
                          ("Rogers", ("ESS_USER", "ESS_PIN"))):
-        if not any(has(n) for n in names):
+        if not any(has(n) for n in names) and not (group == "MLSE" and has("MLSE_ICS_URL")):
             check(f"{group} secrets", None, "not set up, skipped")
             continue
         for n in names:
             check(f"Secret {n}", has(n), "" if has(n) else "missing")
+    mlse_ok = has("MLSE_ICS_URL") or (has("MLSE_USER") and has("MLSE_PASS"))
     missing = [n for n in ("GCAL_SERVICE_KEY", "CALENDAR_ID") if not has(n)]
-    if not has("MLSE_ICS_URL") and not (has("ESS_USER") and has("ESS_PIN")):
-        missing.append("MLSE_ICS_URL (for MLSE) or ESS_USER + ESS_PIN (for Rogers)")
+    if not mlse_ok and not (has("ESS_USER") and has("ESS_PIN")):
+        missing.append("MLSE_USER + MLSE_PASS (for MLSE) or ESS_USER + ESS_PIN (for Rogers)")
     if missing:
         log.error("Missing GitHub secret(s): %s. Add them in your repository: "
                   "Settings > Secrets and variables > Actions.", ", ".join(missing))
@@ -112,7 +113,7 @@ def _as_toronto(value):
     return datetime.combine(value, dt.time.min, tzinfo=TZ)
 
 
-def fetch_mlse_shifts():
+def fetch_mlse_shifts(url):
     """Download and parse the MLSE feed. Raises on any failure, so a broken
     feed is never mistaken for "no shifts"."""
     log.info("Fetching MLSE feed ...")
@@ -122,7 +123,7 @@ def fetch_mlse_shifts():
     # within ~30 seconds, so retries wait 35 seconds.
     for attempt in range(1, 4):
         try:
-            resp = requests.get(config.MLSE_ICS_URL, timeout=30)
+            resp = requests.get(url, timeout=30)
             resp.raise_for_status()
             break
         except Exception as err:
@@ -201,23 +202,64 @@ def build_enriched_body(shift, detail):
 
 
 
+def _stored_feed_url(existing):
+    """The feed link this sync found earlier, saved in an event's private data."""
+    for ev in existing.values():
+        url = ((ev.get("extendedProperties") or {}).get("private") or {}).get("feedUrl")
+        if url:
+            return url
+    return None
+
+
 def sync_mlse(service, calendar_id):
-    if not config.MLSE_ICS_URL:
-        log.info("MLSE_ICS_URL not set; skipping MLSE.")
+    user = (os.environ.get("MLSE_USER") or "").strip()
+    pw = (os.environ.get("MLSE_PASS") or "").rstrip("\r\n")
+    if not config.MLSE_ICS_URL and not (user and pw):
+        log.info("MLSE not set up; skipping MLSE.")
         return OK
 
-    # 1. Read the feed. If this fails, stop WITHOUT deleting anything.
-    try:
-        shifts = fetch_mlse_shifts()
-    except Exception as err:
-        log.error("MLSE feed failed (%s). Calendar left untouched.", err)
-        check("MLSE feed link", False, "re-copy it from MLSE > My Calendar > Subscribe")
-        return FAILED
-    check("MLSE feed link", True, f"{len(shifts)} shift(s) found")
+    existing = gcal.list_managed_events(service, calendar_id)
+
+    # 1. Find the personal calendar feed link: the MLSE_ICS_URL secret if set,
+    #    else the one found earlier, else log in once and read it from
+    #    My Calendar > Subscribe. A link that stops working is looked up again.
+    feed_url = config.MLSE_ICS_URL or _stored_feed_url(existing)
+    found_now = False
+    shifts = None
+    for attempt in (1, 2):
+        if not feed_url and user and pw and not found_now:
+            try:
+                feed_url = mlse_portal.discover_feed_url(user, pw)
+            except mlse_portal.LoginFailed:
+                check("MLSE login", False, "User ID or password rejected")
+                print("::error title=MLSE login failed::Log in by hand at "
+                      f"{config.MLSE_PORTAL_URL} (type it, no autofill). If that works, "
+                      "save the same password again as the MLSE_PASS secret.")
+                return LOGIN_FAILED
+            except Exception as err:
+                log.error("Couldn't open MLSE to find your calendar link (%s).", err)
+                feed_url = None
+            found_now = True
+        if not feed_url:
+            why = ", ".join(mlse_portal.MISSING) or "couldn't open MLSE"
+            check("MLSE calendar link", False, f"not found ({why}); retried next run")
+            return FAILED
+        try:
+            shifts = fetch_mlse_shifts(feed_url)  # raises on failure: never "no shifts"
+            break
+        except Exception as err:
+            log.error("MLSE feed failed (%s).", err)
+            if config.MLSE_ICS_URL or found_now or not (user and pw):
+                check("MLSE calendar link", False, "MLSE didn't return your calendar; "
+                      "retried next run")
+                return FAILED
+            log.info("The saved calendar link stopped working; looking it up again.")
+            feed_url = None
+    check("MLSE calendar link", True, f"{len(shifts)} shift(s) found"
+          + ("; link found automatically" if not config.MLSE_ICS_URL else ""))
 
     now = datetime.now(TZ)
     desired = {gcal.make_event_id(config.SOURCE, s["start"]): s for s in shifts}
-    existing = gcal.list_managed_events(service, calendar_id)
     log.info("Calendar holds %d MLSE event(s); feed has %d shift(s).",
              len(existing), len(desired))
 
@@ -254,6 +296,15 @@ def sync_mlse(service, calendar_id):
     log.info("MLSE feed sync: %d created, %d updated, %d unchanged, %d deleted.",
              created, updated, unchanged, deleted)
 
+    # Save an auto-found link on the earliest shift (past shifts are never
+    # rewritten), so later runs don't need to log in to find it again.
+    if not config.MLSE_ICS_URL and desired and _stored_feed_url(existing) != feed_url:
+        keep_id = min(desired, key=lambda e: desired[e]["start"])
+        try:
+            gcal.set_private_prop(service, calendar_id, keep_id, "feedUrl", feed_url)
+        except Exception as err:
+            log.warning("Couldn't save the calendar link for next time (%s).", err)
+
     # 4. Add details. Only shifts that were ALREADY on the calendar before this
     #    run, upcoming, and not yet detailed. No candidates = no login at all.
     today = now.date()
@@ -275,8 +326,6 @@ def sync_mlse(service, calendar_id):
         check("MLSE login (for event names)", None, "not needed this run")
         return OK
 
-    user = (os.environ.get("MLSE_USER") or "").strip()
-    pw = (os.environ.get("MLSE_PASS") or "").rstrip("\r\n")
     if not user or not pw:
         log.warning("%d shift(s) need details but MLSE_USER / MLSE_PASS are not "
                     "set; leaving them as time-only.", len(candidates))
@@ -343,7 +392,8 @@ def sync_mlse(service, calendar_id):
 def not_set_up_yet():
     """A fresh copy with no secrets at all: stay quiet on the schedule
     (no failure emails every hour) until the person adds their secrets."""
-    names = ("GCAL_SERVICE_KEY", "CALENDAR_ID", "MLSE_ICS_URL", "ESS_USER", "ESS_PIN")
+    names = ("GCAL_SERVICE_KEY", "CALENDAR_ID", "MLSE_ICS_URL", "MLSE_USER", "MLSE_PASS",
+             "ESS_USER", "ESS_PIN")
     return (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
             and not any((os.environ.get(n) or "").strip() for n in names))
 

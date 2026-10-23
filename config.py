@@ -13,6 +13,7 @@ TIMEZONE = "America/Toronto"
 
 # --- Personal values (read from GitHub secrets at run time) -----------------
 CALENDAR_ID = (os.environ.get("CALENDAR_ID") or "").strip()
+# Optional: the sync finds your MLSE calendar link by itself if this is unset.
 MLSE_ICS_URL = (os.environ.get("MLSE_ICS_URL") or "").strip()
 
 # --- MLSE WorkForce ---------------------------------------------------------

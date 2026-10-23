@@ -35,7 +35,7 @@ You are setting up "Shift Sync" for a non-technical person. It is a small Python
 ## How the system works (for you, the AI)
 
 **MLSE (optional):**
-- **Shift times** come from the person's private MLSE calendar feed (an iCalendar link from MLSE WorkForce → My Calendar → Subscribe).
+- **Shift times** come from the person's private MLSE calendar feed. The sync logs in once and reads that link from MLSE WorkForce → My Calendar → Subscribe by itself, saves it privately, and looks it up again if it ever stops working.
 - **Shift details** (event, venue, department, job class) come from logging in to MLSE WorkForce with a headless browser (Playwright) and reading the Schedule tab of their timesheet.
 - It only logs in when an upcoming shift still needs details. A brand-new shift gets its details on the next run.
 
@@ -48,7 +48,7 @@ You are setting up "Shift Sync" for a non-technical person. It is a small Python
 **Shared:**
 - **Google Calendar** is written through a Google Cloud service account that the person's calendar is shared with.
 - **Personal values** live only in GitHub Actions secrets. The code files are identical for everyone.
-  - MLSE: `MLSE_ICS_URL`, `MLSE_USER`, `MLSE_PASS`
+  - MLSE: `MLSE_USER`, `MLSE_PASS` (the calendar link is found automatically; an optional `MLSE_ICS_URL` secret overrides it)
   - Rogers: `ESS_USER`, `ESS_PIN`
   - Always: `GCAL_SERVICE_KEY`, `CALENDAR_ID`
   - A source whose secrets aren't set is simply skipped.
@@ -67,7 +67,7 @@ You are setting up "Shift Sync" for a non-technical person. It is a small Python
 5. **If a screen looks different** from these steps (websites change), ask the person to describe what they see or send a screenshot. Then guide from that. Don't guess.
 6. **Check every step** using the "✅ Check" line before moving on.
 7. **Be honest.** If something fails, say what failed and use the troubleshooting table. Never say it works until step 9 shows it working.
-8. **Only do the parts for where they work.** MLSE only: skip steps 1B and the ESS secrets. Rogers only: skip steps 1A and 2, and the three MLSE secrets.
+8. **Only do the parts for where they work.** MLSE only: skip step 1B and the ESS secrets. Rogers only: skip step 1A and the two MLSE secrets.
 
 ## Which way to work
 
@@ -87,7 +87,7 @@ Ask the person:
 4. "Do you have a personal Google account (like an @gmail.com address)?"
 5. "Do you already have a GitHub account?" If not, that's fine; step 5 makes one.
 
-Tell them to keep a **notes app** open (Notes, Notepad, Google Keep). They'll temporarily save up to 3 things in it: the MLSE feed link, the Calendar ID, and a robot email address. Remind them not to paste any of these into this chat.
+Tell them to keep a **notes app** open (Notes, Notepad, Google Keep). They'll temporarily save 2 things in it: the Calendar ID and a robot email address. Remind them not to paste any of these into this chat.
 
 ## Step 1A — Test the MLSE login (MLSE only)
 
@@ -108,14 +108,9 @@ Tell them to keep a **notes app** open (Notes, Notepad, Google Keep). They'll te
 
 **For supervisors and other roles:** if their ESS has no "View My Schedule" page, or their shifts look very different, ask them to describe the screen. The sync reads exactly that page. If their shifts are on a different page, Rogers syncing may not work for them. MLSE still works, so continue, and tell them so honestly.
 
-## Step 2 — Copy the MLSE calendar feed link (MLSE only)
+## Step 2 — (nothing to do)
 
-1. While logged in to MLSE WorkForce, click **My Calendar**. If MLSE asks them to pick an assignment, pick their job. A month calendar with their shifts appears.
-2. At the top right, beside **Print Calendar**, click **Subscribe**.
-3. Copy the link it shows. It starts with `https://mlse.wta-ca3.wfs.cloud/workforce/ICalFeed.do?action=getCalFeed&feed=`
-4. Paste it into their notes app (**not** this chat) labelled "Feed link".
-
-✅ Check: open a new browser tab, paste the link, press Enter. A file downloads (often named something `.ics`), or text starting with `BEGIN:VCALENDAR` shows up. If MLSE shows an error, wait 30 seconds and try once more. MLSE refuses repeat downloads of the same link within about 30 seconds.
+The sync finds their MLSE calendar link by itself after logging in. Go to step 3.
 
 ## Step 3 — Make a new Google Calendar for shifts
 
@@ -167,7 +162,6 @@ In the repository: **Settings** tab → left side **Secrets and variables** → 
 |---|---|---|
 | `GCAL_SERVICE_KEY` | everyone | Open the downloaded `.json` key file in a text editor (Notepad, TextEdit), select **all** of it from the first `{` to the last `}`, copy, paste. |
 | `CALENDAR_ID` | everyone | The Calendar ID from step 3. |
-| `MLSE_ICS_URL` | MLSE | The feed link from step 2. |
 | `MLSE_USER` | MLSE | MLSE User ID. |
 | `MLSE_PASS` | MLSE | MLSE password. **Type it by hand**, exactly as in step 1A. No autofill, and no spaces before or after. |
 | `ESS_USER` | Rogers | ESS employee number. |
@@ -240,7 +234,7 @@ Tell the person, in plain words:
 | `GCAL_SERVICE_KEY is not valid` / `not a service-account key` | The key wasn't copied completely. | Re-copy the **whole** `.json` file, from `{` to `}`, into `GCAL_SERVICE_KEY`. |
 | `Cannot reach your calendar (HTTP 404)` or `(HTTP 403)` | Wrong Calendar ID, or the calendar isn't shared with the robot email. | Re-copy the Calendar ID (step 3). Re-check the sharing from step 4.8: robot email, "Make changes to events". |
 | `MLSE feed failed (… 400 …)` once in a while | MLSE refuses downloads less than 30 seconds apart. The code already waits and retries. | Nothing to do. Don't click "Run workflow" twice in a row. |
-| `MLSE feed failed (… 404 …)` or `did not return a calendar`, every run | The feed link is wrong or no longer valid. | Get the link again (step 2) and update `MLSE_ICS_URL`. |
+| `MLSE calendar link … not found` every run | The sync couldn't find My Calendar > Subscribe for their account (some MLSE accounts look different). | Ask them to describe their MLSE My Calendar page. As a workaround, copy the link from **Subscribe** by hand and save it as an `MLSE_ICS_URL` secret; the sync then uses that instead. |
 | `Rogers: off-season; next ESS check at 10 or 16:00` | Normal between baseball seasons. | Nothing to do. To force a check, add `ROGERS_FORCE_CHECK` = `1`, run, then delete it. |
 | Run "cancelled" after ~15 minutes with no steps; "The job was not acquired by Runner…" | A GitHub outage, not their setup. | Check https://www.githubstatus.com. Nothing to fix; it recovers by itself. |
 | A message about a budget or spending limit, and runs don't start | The free minutes for the month ran out and the $0 cap stopped the runs, so no charge happened. | Wait for the 1st of the month. To check: Settings → Billing and licensing → Usage. This setup normally uses well under half the free minutes. |

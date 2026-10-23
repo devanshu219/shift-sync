@@ -81,7 +81,7 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
     <input id="gh" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. jane-doe">
     <p class="hint">No GitHub account? <a href="https://github.com/signup" target="_blank" rel="noopener">Create a free one</a> (2 min), then type the username here. It only fills in the buttons below; it isn't sent anywhere.</p>
     <div class="progress" aria-hidden="true"><div id="bar"></div></div>
-    <p class="hint" id="count">0 of 8 steps done</p>
+    <p class="hint" id="count">0 of 7 steps done</p>
   </section>
 
   <details class="card phone" id="phone">
@@ -93,14 +93,14 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
           <li>iPhone Safari: tap <b>aA</b> in the address bar, then <b>Request Desktop Website</b>.</li>
           <li>Android Chrome: tap <b>⋮</b>, then tick <b>Desktop site</b>.</li>
         </ul>
-        Turn it on again on each new site (Google Calendar, Google Cloud, MLSE).</li>
+        Turn it on again on each new site (Google Calendar, Google Cloud, GitHub).</li>
       <li><b>Copying the key file</b> (the <code>.json</code> from the robot step) is the trickiest part:
         <ul>
           <li>iPhone: open the <b>Files</b> app, then <b>Downloads</b>, and tap the <code>.json</code> file to preview it. Press and hold on the text, tap <b>Select All</b>, then <b>Copy</b>.</li>
           <li>Android: open <b>Files</b>, then <b>Downloads</b>, and open the <code>.json</code> file with a text viewer. Select all, then copy.</li>
           <li>Paste it as the <code>GCAL_SERVICE_KEY</code> secret. Check it starts with <code>{</code> and ends with <code>}</code>.</li>
         </ul></li>
-      <li><b>Keep a Notes app open</b> for the 3 things you copy (feed link, Calendar ID, robot email). Switch between apps with the app switcher.</li>
+      <li><b>Keep a Notes app open</b> for the 2 things you copy (Calendar ID, robot email). Switch between apps with the app switcher.</li>
     </ol>
     <p class="hint">If anything looks different, finish that step later on a computer. Your ticks on this page are saved.</p>
   </details>
@@ -114,20 +114,6 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
         <p class="only-mlse"><a class="btn" href="https://mlse.wta-ca3.wfs.cloud/workforce/Desktop.do" target="_blank" rel="noopener">Open MLSE WorkForce</a> Log in with your User ID and password.</p>
         <p class="only-rogers"><a class="btn" href="https://ess.abimm.com/ABIMM_ASP/Request.aspx" target="_blank" rel="noopener">Open Rogers ESS</a> Venue <code>LEGENDSTBJ</code>, then your employee number and PIN, then <b>View My Schedule</b>.</p>
         <p class="note only-rogers">Supervisor or a different ESS screen? If your shifts aren't under "View My Schedule", the Rogers part may not read them. MLSE still works.</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="card step only-mlse" data-step="feed">
-    <input type="checkbox" aria-label="Done">
-    <div>
-      <h2>Copy your MLSE calendar link <span class="time">· 1 min</span></h2>
-      <div class="body">
-        <ol>
-          <li>In MLSE WorkForce, click <b>My Calendar</b> (pick your job if it asks).</li>
-          <li>Top right, beside <b>Print Calendar</b>, click <b>Subscribe</b>, and copy the link. On a phone, turn on desktop mode if you don't see it.</li>
-          <li>Paste it into your Notes app as <b>"Feed link"</b>. You'll need it when adding your private details.</li>
-        </ol>
       </div>
     </div>
   </section>
@@ -201,7 +187,6 @@ footer{color:var(--muted);font-size:.9rem;margin-top:26px}
         <table>
           <tr><td><span class="chip">GCAL_SERVICE_KEY<button>Copy</button></span></td><td>Open the downloaded <code>.json</code> in Notepad or TextEdit, then select all and copy. On a phone: see "Doing this on a phone?" above.</td></tr>
           <tr><td><span class="chip">CALENDAR_ID<button>Copy</button></span></td><td>Calendar ID from Notes</td></tr>
-          <tr class="only-mlse"><td><span class="chip">MLSE_ICS_URL<button>Copy</button></span></td><td>Feed link from Notes</td></tr>
           <tr class="only-mlse"><td><span class="chip">MLSE_USER<button>Copy</button></span></td><td>MLSE User ID</td></tr>
           <tr class="only-mlse"><td><span class="chip">MLSE_PASS<button>Copy</button></span></td><td>MLSE password</td></tr>
           <tr class="only-rogers"><td><span class="chip">ESS_USER<button>Copy</button></span></td><td>ESS employee number</td></tr>

@@ -141,6 +141,71 @@ def _loadscreen_frame(page):
     return None
 
 
+def _login(page, user, pw):
+    """Log in to WorkForce; raises LoginFailed if the password is rejected."""
+    log.info("MLSE: logging in ...")
+    page.goto(config.MLSE_PORTAL_URL, wait_until="networkidle", timeout=60000)
+    page.wait_for_selector("#password", timeout=30000)
+    page.fill("#username", user)
+    page.fill("#password", pw)
+    page.click("#LogonForm input[type=submit], input[name=Submit], button:has-text('Log In')")
+    page.wait_for_load_state("networkidle", timeout=60000)
+    if page.query_selector("#password"):
+        raise LoginFailed()
+    page.wait_for_timeout(2000)
+
+
+def _open_my_calendar(ctx, page):
+    """From the home page to the month calendar (picks the assignment)."""
+    _click_any(ctx, ['[id^="SCHEDULES.MY_CALENDAR"]',
+                     'a[href*="createForEmployeeCalendar"]',
+                     'a:has-text("My Calendar")'], "My Calendar")
+    page.wait_for_timeout(3500)
+    _click_any(ctx, ['a:has-text("Timesheet")', 'a:has-text("Schedule")', 'table a'],
+               "assignment")
+    page.wait_for_timeout(3500)
+
+
+_FEED_RE = re.compile(r"https://[^\s\"'<>]*ICalFeed\.do\?[^\s\"'<>]+")
+
+
+def discover_feed_url(user, pw):
+    """Log in, open My Calendar > Subscribe, and return the personal calendar
+    feed link (or None if it can't be found)."""
+    MISSING.clear()
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        try:
+            _login(page, user, pw)
+            _open_my_calendar(ctx, page)
+            _click_any(ctx, ['div.subscribeButton', '[title="Subscribe Calendar"]',
+                             'button:has-text("Subscribe")', 'a:has-text("Subscribe")'],
+                       "Subscribe")
+            page.wait_for_timeout(3000)
+            for pg in [x for x in ctx.pages if not x.is_closed()]:
+                for fr in pg.frames:
+                    try:
+                        values = fr.evaluate(
+                            "() => [...document.querySelectorAll('input,textarea')]"
+                            ".map(e => e.value || '')"
+                            ".concat([...document.querySelectorAll('a[href]')].map(a => a.href))")
+                        values.append(fr.content())
+                    except Exception:
+                        continue
+                    for text in values:
+                        m = _FEED_RE.search((text or "").replace("&amp;", "&"))
+                        if m:
+                            log.info("MLSE: found your calendar feed link.")
+                            return m.group(0)
+            MISSING.append("calendar feed link (My Calendar > Subscribe)")
+            log.warning("MLSE: couldn't find the calendar feed link.")
+            return None
+        finally:
+            browser.close()
+
+
 def fetch_enrichment(user, pw, max_date):
     """Return {(iso_date, 'HH:MM'): detail_dict} covering up to `max_date`."""
     result = {}
@@ -150,25 +215,10 @@ def fetch_enrichment(user, pw, max_date):
         ctx = browser.new_context()
         page = ctx.new_page()
         try:
-            log.info("MLSE: logging in ...")
-            page.goto(config.MLSE_PORTAL_URL, wait_until="networkidle", timeout=60000)
-            page.wait_for_selector("#password", timeout=30000)
-            page.fill("#username", user)
-            page.fill("#password", pw)
-            page.click("#LogonForm input[type=submit], input[name=Submit], button:has-text('Log In')")
-            page.wait_for_load_state("networkidle", timeout=60000)
-            if page.query_selector("#password"):
-                raise LoginFailed()
-            page.wait_for_timeout(2000)
+            _login(page, user, pw)
 
             # Navigate to the Schedule tab.
-            _click_any(ctx, ['[id^="SCHEDULES.MY_CALENDAR"]',
-                             'a[href*="createForEmployeeCalendar"]',
-                             'a:has-text("My Calendar")'], "My Calendar")
-            page.wait_for_timeout(3500)
-            _click_any(ctx, ['a:has-text("Timesheet")', 'a:has-text("Schedule")', 'table a'],
-                       "assignment")
-            page.wait_for_timeout(3500)
+            _open_my_calendar(ctx, page)
             _click_any(ctx, ['div.CALENDAR_CATEGORY-SCHEDULE_class',
                              'div[title="Scheduled Time"]', '.items .item'], "a shift")
             page.wait_for_timeout(3000)
