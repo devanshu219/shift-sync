@@ -49,13 +49,36 @@ _GRID_JS = """
            || r.querySelector(`input[fieldmappingpolicy="${pol}"]`);
     return d ? (d.getAttribute('title') || d.value || '').trim() : '';
   };
+  // Some accounts label the date/time fields differently, so fall back to any
+  // field named like START/END, then to times/dates written in the row itself.
+  const val = e => (e.getAttribute('title') || e.value || e.textContent || '').trim();
+  const named = (r, re) => {
+    for (const e of r.querySelectorAll('[fieldmappingpolicy]')) {
+      if (re.test(e.getAttribute('fieldmappingpolicy') || '')) {
+        const v = val(e);
+        if (v) return v;
+      }
+    }
+    return '';
+  };
+  const text = r => (r.innerText || r.textContent || '');
+  const times = r => text(r).match(/\d{1,2}:\d{2}\s*(?:[ap]\.?\s*m\b)?/gi) || [];
   return rows.map(r => {
     const dt = r.querySelector('[name="work_dt"]');
+    const dateText = (dt ? dt.textContent.trim() : '')
+      || (text(r).match(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/) || [''])[0];
     return {
-      date: dt ? dt.textContent.trim() : '',
-      start: cell(r,'START_DTTM'), end: cell(r,'END_DTTM'),
+      date: dateText,
+      start: cell(r,'START_DTTM') || named(r, /(^|_)START(_|$)|START_?TIME/i) || times(r)[0] || '',
+      end: cell(r,'END_DTTM') || named(r, /(^|_)(END|STOP)(_|$)|END_?TIME/i) || times(r)[1] || '',
       venue: cell(r,'MLSE_VENUE'), department: cell(r,'MLSE_DEPARTMENT'),
       job_class: cell(r,'MLSE_JOB_CLASS'), event: cell(r,'MLSE_EVENT'),
+      debug: {
+        fields: [...r.querySelectorAll('[fieldmappingpolicy]')]
+          .map(e => (e.getAttribute('fieldmappingpolicy') || '') + '=' + val(e))
+          .filter(x => !x.endsWith('=')).slice(0, 15),
+        text: text(r).replace(/\s+/g, ' ').trim().slice(0, 160),
+      },
     };
   }).filter(x => x.venue || x.event || x.start);
 }
@@ -330,8 +353,8 @@ def _read_schedule(ctx, page, max_date):
         log.info("MLSE: period %s -> %d rows (%d usable)", range_text or "?", len(rows), added)
         DIAG["periods"] = DIAG.get("periods", 0) + 1
         if rows and not added and "sample" not in DIAG:
-            DIAG["sample"] = [{"date": r["date"], "start": r["start"], "end": r["end"]}
-                              for r in rows[:2]]
+            DIAG["sample"] = [{"date": r["date"], "start": r["start"], "end": r["end"],
+                               **r.get("debug", {})} for r in rows[:2]]
             log.info("MLSE: rows found but dates/times not understood; sample: %s",
                      DIAG["sample"])
         if not rows:
