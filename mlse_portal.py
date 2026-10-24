@@ -62,10 +62,19 @@ _GRID_JS = """
     return '';
   };
   const text = r => (r.innerText || r.textContent || '');
+  // Some accounts keep the date column in a separate part of the table; it is
+  // tied to the shift row by the same internal row id.
+  const workDt = {};
+  document.querySelectorAll('[name="work_dt"]').forEach(e => {
+    const tr = e.closest('tr');
+    const id = tr && tr.getAttribute('datarowid');
+    if (id && e.textContent.trim()) workDt[id] = e.textContent.trim();
+  });
   const times = r => text(r).match(/\d{1,2}:\d{2}\s*(?:[ap]\.?\s*m\b)?/gi) || [];
   return rows.map(r => {
     const dt = r.querySelector('[name="work_dt"]');
     const dateText = (dt ? dt.textContent.trim() : '')
+      || workDt[r.getAttribute('datarowid') || ''] || ''
       || (text(r).match(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/) || [''])[0];
     return {
       date: dateText,
@@ -78,6 +87,10 @@ _GRID_JS = """
           .map(e => (e.getAttribute('fieldmappingpolicy') || '') + '=' + val(e))
           .filter(x => !x.endsWith('=')).slice(0, 15),
         text: text(r).replace(/\s+/g, ' ').trim().slice(0, 160),
+        row: r.id, datarowid: r.getAttribute('datarowid'),
+        date_cells_on_page: document.querySelectorAll('[name="work_dt"]').length,
+        prev_row: (r.previousElementSibling && text(r.previousElementSibling)
+                   .replace(/\s+/g, ' ').trim().slice(0, 80)) || '',
       },
     };
   }).filter(x => x.venue || x.event || x.start);
@@ -152,6 +165,21 @@ def _period_bounds(text):
     a = dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
     b = dt.date(int(m.group(6)), int(m.group(4)), int(m.group(5)))
     return a, b
+
+
+_MONTHS_ABBR = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+def _event_date(event):
+    """'Canada MNT vs Chile Sep 26/26' -> date(2026, 9, 26), or None."""
+    m = re.search(r"\b([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})/(\d{2})\s*$", event or "")
+    if not m or m.group(1).lower() not in _MONTHS_ABBR:
+        return None
+    try:
+        return dt.date(2000 + int(m.group(3)), _MONTHS_ABBR[m.group(1).lower()], int(m.group(2)))
+    except ValueError:
+        return None
 
 
 def _row_to_date(mmdd_text, p_start, p_end):
@@ -336,9 +364,16 @@ def _read_schedule(ctx, page, max_date):
         added = 0
         for r in rows:
             d = (_row_to_date(r["date"], p_start, p_end)
-                 or _row_to_date(r["start"], p_start, p_end))
+                 or _row_to_date(r["start"], p_start, p_end)
+                 or _event_date(r["event"]))
             t = parse_clock(r["start"])
             if not d or not t:
+                DIAG["undated"] = DIAG.get("undated", 0) + 1
+                if "undated_sample" not in DIAG:
+                    DIAG["undated_sample"] = {k: r.get(k) for k in ("date", "start", "event")}
+                    DIAG["undated_sample"].update(r.get("debug", {}))
+                    log.info("MLSE: a schedule row had no readable date/time: %s",
+                             DIAG["undated_sample"])
                 continue
             result[(d.isoformat(), t)] = {
                 "venue_code": r["venue"],

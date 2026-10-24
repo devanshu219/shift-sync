@@ -388,7 +388,11 @@ def sync_mlse(service, calendar_id):
         check("MLSE event details", False, f"{why} | {seen}")
         return DETAILS_PROBLEM
     note = f"details added to {added} of {len(candidates)} shift(s)"
-    if added < len(candidates):
+    undated = mlse_portal.DIAG.get("undated", 0)
+    if undated:
+        note += (f"; {undated} MLSE schedule row(s) had no readable date, so their "
+                 f"details couldn't be matched: {mlse_portal.DIAG.get('undated_sample')}")
+    elif added < len(candidates):
         note += " (the rest aren't on MLSE's Schedule page yet)"
     check("MLSE login (for event names)", True, note)
     return OK
