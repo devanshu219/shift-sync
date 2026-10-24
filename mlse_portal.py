@@ -82,16 +82,21 @@ _PANELS_JS = """
 
 
 def parse_clock(text):
-    """'09:30 am' / '5:30 pm' -> 'HH:MM' (24h), or None."""
-    m = re.search(r"(\d{1,2}):(\d{2})\s*([ap])m", text.strip(), re.I)
-    if not m:
-        return None
-    h, mn, ap = int(m.group(1)), int(m.group(2)), m.group(3).lower()
-    if ap == "p" and h != 12:
-        h += 12
-    if ap == "a" and h == 12:
-        h = 0
-    return f"{h:02d}:{mn:02d}"
+    """'09:30 am' / '5:30 PM' / '17:30' (24-hour, as some accounts show it)
+    -> 'HH:MM' (24h), or None."""
+    text = (text or "").strip()
+    m = re.search(r"(\d{1,2}):(\d{2})\s*([ap])\.?\s*m\b", text, re.I)
+    if m:
+        h, mn, ap = int(m.group(1)), int(m.group(2)), m.group(3).lower()
+        if ap == "p" and h != 12:
+            h += 12
+        if ap == "a" and h == 12:
+            h = 0
+        return f"{h:02d}:{mn:02d}"
+    m = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", text)
+    if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
+        return f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
+    return None
 
 
 def venue_full(code):
@@ -127,22 +132,33 @@ def _period_bounds(text):
 
 
 def _row_to_date(mmdd_text, p_start, p_end):
-    """'Fri 06/12' + period bounds -> a date with the right year."""
-    m = re.search(r"(\d{1,2})/(\d{1,2})", mmdd_text)
+    """'Fri 06/12' (month/day), '12/06' (day/month on some accounts) or
+    '2026-06-12' + the pay period's dates -> the right date, or None."""
+    text = mmdd_text or ""
+    iso = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    if iso:
+        try:
+            return dt.date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+        except ValueError:
+            return None
+    m = re.search(r"(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?", text)
     if not m:
         return None
-    mo, da = int(m.group(1)), int(m.group(2))
-    for yr in {p_start.year, p_end.year} if p_start and p_end else {dt.date.today().year}:
-        try:
-            d = dt.date(yr, mo, da)
-        except ValueError:
-            continue
-        if not p_start or (p_start - dt.timedelta(days=2)) <= d <= (p_end + dt.timedelta(days=2)):
-            return d
-    try:
-        return dt.date((p_end or dt.date.today()).year, mo, da)
-    except ValueError:
-        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    years = ({int(m.group(3)) % 100 + 2000} if m.group(3)
+             else ({p_start.year, p_end.year} if p_start and p_end else {dt.date.today().year}))
+    candidates = []
+    for yr in years:
+        for mo, da in ((a, b), (b, a)):  # month/day first, then day/month
+            try:
+                candidates.append(dt.date(yr, mo, da))
+            except ValueError:
+                pass
+    if p_start and p_end:
+        for d in candidates:
+            if (p_start - dt.timedelta(days=2)) <= d <= (p_end + dt.timedelta(days=2)):
+                return d
+    return candidates[0] if candidates else None
 
 
 def _click_any(ctx, selectors, label, timeout=5000):
@@ -296,7 +312,8 @@ def _read_schedule(ctx, page, max_date):
         rows = frame.evaluate(_GRID_JS)
         added = 0
         for r in rows:
-            d = _row_to_date(r["date"], p_start, p_end)
+            d = (_row_to_date(r["date"], p_start, p_end)
+                 or _row_to_date(r["start"], p_start, p_end))
             t = parse_clock(r["start"])
             if not d or not t:
                 continue
@@ -312,6 +329,11 @@ def _read_schedule(ctx, page, max_date):
             added += 1
         log.info("MLSE: period %s -> %d rows (%d usable)", range_text or "?", len(rows), added)
         DIAG["periods"] = DIAG.get("periods", 0) + 1
+        if rows and not added and "sample" not in DIAG:
+            DIAG["sample"] = [{"date": r["date"], "start": r["start"], "end": r["end"]}
+                              for r in rows[:2]]
+            log.info("MLSE: rows found but dates/times not understood; sample: %s",
+                     DIAG["sample"])
         if not rows:
             try:
                 DIAG["page"] = frame.evaluate(_PANELS_JS)
@@ -361,11 +383,12 @@ def fetch_enrichment(user, pw, max_date):
 
 
 def fmt_clock(text):
-    """'01:15 pm' -> '1:15PM' (drop leading zero, no space, uppercase)."""
-    m = re.search(r"(\d{1,2}):(\d{2})\s*([ap])m", text.strip(), re.I)
-    if not m:
-        return text.strip()
-    return f"{int(m.group(1))}:{m.group(2)}{m.group(3).upper()}M"
+    """'01:15 pm' or '13:15' -> '1:15PM' (drop leading zero, no space, uppercase)."""
+    hhmm = parse_clock(text)
+    if not hhmm:
+        return (text or "").strip()
+    h, mn = int(hhmm[:2]), hhmm[3:]
+    return f"{h % 12 or 12}:{mn}{'AM' if h < 12 else 'PM'}"
 
 
 def classify_emoji(detail):

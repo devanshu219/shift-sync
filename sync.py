@@ -380,6 +380,8 @@ def sync_mlse(service, calendar_id):
         diag = mlse_portal.DIAG
         seen = (f"jobs offered: {diag.get('jobs', '?')}; pay periods read: "
                 f"{diag.get('periods', 0)}; page held: {diag.get('page', 'n/a')}")
+        if diag.get("sample"):
+            seen += f"; rows looked like: {diag['sample']}"
         log.error("No event details added: %s. Retried next run. (%s)", why, seen)
         print(f"::error title=MLSE event details not added::{why}. "
               "Shift times are in your calendar.")
