@@ -51,7 +51,7 @@ log = logging.getLogger("sync")
 
 TZ = ZoneInfo(config.TIMEZONE)
 OK, FAILED, LOGIN_FAILED = config.OK, config.FAILED, config.LOGIN_FAILED
-SETUP_PROBLEM = config.SETUP_PROBLEM
+SETUP_PROBLEM, DETAILS_PROBLEM = config.SETUP_PROBLEM, config.DETAILS_PROBLEM
 
 # A plain ✅ / ❌ checklist, shown on the GitHub run page (Summary tab) and at
 # the end of the log, so setup problems are easy to spot.
@@ -353,7 +353,7 @@ def sync_mlse(service, calendar_id):
         print("::error title=MLSE event details not added yet::Shift times are in "
               "your calendar. The event names and venues will be added on the next run.")
         check("MLSE event details", False, "couldn't read MLSE this run; retried next run")
-        return FAILED
+        return DETAILS_PROBLEM
 
     added = 0
     for eid, shift in candidates.items():
@@ -377,11 +377,14 @@ def sync_mlse(service, calendar_id):
                    "matched your calendar's shift times")
         else:
             why = "MLSE's Schedule page showed no shifts"
-        log.error("No event details added: %s. Retried next run.", why)
+        diag = mlse_portal.DIAG
+        seen = (f"jobs offered: {diag.get('jobs', '?')}; pay periods read: "
+                f"{diag.get('periods', 0)}; page held: {diag.get('page', 'n/a')}")
+        log.error("No event details added: %s. Retried next run. (%s)", why, seen)
         print(f"::error title=MLSE event details not added::{why}. "
               "Shift times are in your calendar.")
-        check("MLSE event details", False, why)
-        return FAILED
+        check("MLSE event details", False, f"{why} | {seen}")
+        return DETAILS_PROBLEM
     note = f"details added to {added} of {len(candidates)} shift(s)"
     if added < len(candidates):
         note += " (the rest aren't on MLSE's Schedule page yet)"
@@ -430,7 +433,10 @@ def run():
             OK: "OK; in the off-season it checks at 10 AM and 4 PM",
             LOGIN_FAILED: "employee number or PIN rejected",
         }.get(codes[1], "see the log above"))
-    return LOGIN_FAILED if LOGIN_FAILED in codes else (FAILED if FAILED in codes else OK)
+    for code in (LOGIN_FAILED, FAILED, DETAILS_PROBLEM):
+        if code in codes:
+            return code
+    return OK
 
 
 def main():

@@ -15,12 +15,12 @@ if ! python -c "from playwright.sync_api import sync_playwright as s; p = s().st
     || echo "::warning::Couldn't install the browser's system packages."
 fi
 
-# Retries once on a temporary failure (exit 1). Setup problems (exit 2) and a
-# rejected MLSE or ESS login (exit 3) are NOT retried, so a wrong password
-# can't lock an account faster.
+# Retries once on a temporary failure (exit 1). Setup problems (exit 2), a
+# rejected MLSE or ESS login (exit 3, so a wrong password can't lock an
+# account faster) and unreadable event details (exit 4) are NOT retried.
 python sync.py && exit 0
 code=$?
-if [ "$code" -eq 2 ] || [ "$code" -eq 3 ]; then exit "$code"; fi
+if [ "$code" -ne 1 ]; then exit "$code"; fi
 echo "Run failed (exit $code); retrying once in 60 seconds ..."
 sleep 60
 python sync.py

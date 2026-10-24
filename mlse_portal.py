@@ -29,6 +29,9 @@ class LoginFailed(Exception):
 
 # Pages/buttons the last enrichment couldn't find (shown on the checklist).
 MISSING = []
+# What the last enrichment saw: jobs offered, pay periods read, and (for an
+# empty page) which timesheet rows and filled-in fields existed.
+DIAG = {}
 
 # DOM extraction for the Schedule grid (Panel_5). Values live in each cell's
 # inner field wrapper `title` (or the input value).
@@ -308,10 +311,11 @@ def _read_schedule(ctx, page, max_date):
             }
             added += 1
         log.info("MLSE: period %s -> %d rows (%d usable)", range_text or "?", len(rows), added)
+        DIAG["periods"] = DIAG.get("periods", 0) + 1
         if not rows:
             try:
-                log.info("MLSE: timesheet rows on this page (panel:paycode -> count): %s",
-                         frame.evaluate(_PANELS_JS))
+                DIAG["page"] = frame.evaluate(_PANELS_JS)
+                log.info("MLSE: timesheet rows on this page: %s", DIAG["page"])
             except Exception:
                 pass
 
@@ -329,6 +333,7 @@ def fetch_enrichment(user, pw, max_date):
     Tries each MLSE job (assignment), up to 3, until one has scheduled shifts."""
     result = {}
     MISSING.clear()
+    DIAG.clear()
     with sync_playwright() as p:
         browser = p.chromium.launch()
         ctx = browser.new_context()
@@ -345,6 +350,7 @@ def fetch_enrichment(user, pw, max_date):
                         _login(page, user, pw)
                     page.wait_for_timeout(2000)
                 jobs = _open_my_calendar(ctx, page, job)
+                DIAG["jobs"] = jobs
                 result.update(_read_schedule(ctx, page, max_date))
                 if result or job + 1 >= jobs:
                     break
