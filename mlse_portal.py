@@ -34,7 +34,13 @@ MISSING = []
 # inner field wrapper `title` (or the input value).
 _GRID_JS = """
 () => {
-  const rows = [...document.querySelectorAll('tr[id^="dataRow|Panel_5"]')];
+  // Schedule rows: MLSE marks them with paycode "MLSE_SCHEDULE". The panel
+  // number differs between accounts (Panel_5 on some), so it isn't relied on.
+  const all = [...document.querySelectorAll('tr[id^="dataRow|"]')];
+  let rows = all.filter(r => (r.getAttribute('paycode') || '') === 'MLSE_SCHEDULE'
+                          || r.id.startsWith('dataRow|Panel_5'));
+  if (!rows.length) rows = all.filter(r =>
+      r.querySelector('[fieldmappingpolicy="MLSE_EVENT"],[fieldmappingpolicy="MLSE_VENUE"]'));
   const cell = (r, pol) => {
     const d = r.querySelector(`[fieldmappingpolicy="${pol}"][title]`)
            || r.querySelector(`input[fieldmappingpolicy="${pol}"]`);
@@ -49,6 +55,25 @@ _GRID_JS = """
       job_class: cell(r,'MLSE_JOB_CLASS'), event: cell(r,'MLSE_EVENT'),
     };
   }).filter(x => x.venue || x.event || x.start);
+}
+"""
+
+# What the timesheet holds, for the log when no schedule rows are found.
+_PANELS_JS = """
+() => {
+  const out = {};
+  const fields = {};
+  document.querySelectorAll('tr[id^="dataRow|"]').forEach(r => {
+    const k = r.id.split('|')[1] + ':' + (r.getAttribute('paycode') || '-');
+    out[k] = (out[k] || 0) + 1;
+    if (!fields[k]) {
+      const names = [...r.querySelectorAll('[fieldmappingpolicy]')]
+        .filter(e => (e.getAttribute('title') || e.value || '').trim())
+        .map(e => e.getAttribute('fieldmappingpolicy'));
+      if (names.length) fields[k] = [...new Set(names)].slice(0, 12);
+    }
+  });
+  return {rows: out, filled_fields: fields};
 }
 """
 
@@ -155,15 +180,41 @@ def _login(page, user, pw):
     page.wait_for_timeout(2000)
 
 
-def _open_my_calendar(ctx, page):
-    """From the home page to the month calendar (picks the assignment)."""
+def _assignment_links(ctx):
+    """Visible job (assignment) links on MLSE's "pick an assignment" page."""
+    for pg in [x for x in ctx.pages if not x.is_closed()]:
+        for fr in pg.frames:
+            if "AsgnmtPicker" not in fr.url:
+                continue
+            for sel in ('a:has-text("Timesheet")', 'a:has-text("Schedule")', 'table a'):
+                try:
+                    links = [e for e in fr.query_selector_all(sel) if e.is_visible()]
+                except Exception:
+                    links = []
+                if links:
+                    return links
+    return []
+
+
+def _open_my_calendar(ctx, page, index=0):
+    """From the home page to the month calendar, opening job number `index`
+    when MLSE asks which job (assignment). Returns how many jobs there are."""
     _click_any(ctx, ['[id^="SCHEDULES.MY_CALENDAR"]',
                      'a[href*="createForEmployeeCalendar"]',
                      'a:has-text("My Calendar")'], "My Calendar")
     page.wait_for_timeout(3500)
+    links = _assignment_links(ctx)
+    if links:
+        log.info("MLSE: %d job(s) to choose from; opening job %d.", len(links), index + 1)
+        if index < len(links):
+            links[index].click()
+            log.info("clicked assignment")
+            page.wait_for_timeout(3500)
+        return len(links)
     _click_any(ctx, ['a:has-text("Timesheet")', 'a:has-text("Schedule")', 'table a'],
                "assignment")
     page.wait_for_timeout(3500)
+    return 1
 
 
 _FEED_RE = re.compile(r"https://[^\s\"'<>]*ICalFeed\.do\?[^\s\"'<>]+")
@@ -206,8 +257,76 @@ def discover_feed_url(user, pw):
             browser.close()
 
 
+def _read_schedule(ctx, page, max_date):
+    """From the month calendar to the timesheet's Schedule tab; read every
+    pay period up to `max_date`. Returns {(iso_date, 'HH:MM'): detail}."""
+    result = {}
+    _click_any(ctx, ['div.CALENDAR_CATEGORY-SCHEDULE_class',
+                     'div[title="Scheduled Time"]', '.items .item'], "a shift")
+    page.wait_for_timeout(3000)
+    _click_any(ctx, ['a:has-text("Go To Time Sheet")',
+                     'button:has-text("Go To Time Sheet")',
+                     'input[value*="Time Sheet"]'], "Go To Time Sheet")
+    page.wait_for_timeout(4000)
+    _click_any(ctx, ['a:has-text("Schedule")', 'span:has-text("Schedule")',
+                     'div[role="tab"]:has-text("Schedule")'], "Schedule tab")
+    page.wait_for_timeout(4000)
+
+    frame = _loadscreen_frame(page)
+    if not frame:
+        log.error("MLSE: could not find the timesheet frame.")
+        MISSING.append("timesheet Schedule tab")
+        return result
+
+    seen_ranges = set()
+    for _ in range(config.MLSE_MAX_PERIODS):
+        frame = _loadscreen_frame(page) or frame
+        try:
+            range_text = frame.inner_text(".currentDateText")
+        except Exception:
+            range_text = ""
+        p_start, p_end = _period_bounds(range_text)
+        if range_text in seen_ranges:
+            break  # navigation didn't advance
+        seen_ranges.add(range_text)
+
+        rows = frame.evaluate(_GRID_JS)
+        added = 0
+        for r in rows:
+            d = _row_to_date(r["date"], p_start, p_end)
+            t = parse_clock(r["start"])
+            if not d or not t:
+                continue
+            result[(d.isoformat(), t)] = {
+                "venue_code": r["venue"],
+                "venue": venue_full(r["venue"]),
+                "department": r["department"],
+                "job_class": r["job_class"],
+                "event": r["event"],
+                "start": r["start"],
+                "end": r["end"],
+            }
+            added += 1
+        log.info("MLSE: period %s -> %d rows (%d usable)", range_text or "?", len(rows), added)
+        if not rows:
+            try:
+                log.info("MLSE: timesheet rows on this page (panel:paycode -> count): %s",
+                         frame.evaluate(_PANELS_JS))
+            except Exception:
+                pass
+
+        if p_end and p_end >= max_date:
+            break
+        if not _click_any(ctx, ['button[aria-label="Next Period"]', '.nextDateIcon'],
+                          "Next Period"):
+            break
+        page.wait_for_timeout(3500)
+    return result
+
+
 def fetch_enrichment(user, pw, max_date):
-    """Return {(iso_date, 'HH:MM'): detail_dict} covering up to `max_date`."""
+    """Return {(iso_date, 'HH:MM'): detail_dict} covering up to `max_date`.
+    Tries each MLSE job (assignment), up to 3, until one has scheduled shifts."""
     result = {}
     MISSING.clear()
     with sync_playwright() as p:
@@ -216,64 +335,19 @@ def fetch_enrichment(user, pw, max_date):
         page = ctx.new_page()
         try:
             _login(page, user, pw)
-
-            # Navigate to the Schedule tab.
-            _open_my_calendar(ctx, page)
-            _click_any(ctx, ['div.CALENDAR_CATEGORY-SCHEDULE_class',
-                             'div[title="Scheduled Time"]', '.items .item'], "a shift")
-            page.wait_for_timeout(3000)
-            _click_any(ctx, ['a:has-text("Go To Time Sheet")',
-                             'button:has-text("Go To Time Sheet")',
-                             'input[value*="Time Sheet"]'], "Go To Time Sheet")
-            page.wait_for_timeout(4000)
-            _click_any(ctx, ['a:has-text("Schedule")', 'span:has-text("Schedule")',
-                             'div[role="tab"]:has-text("Schedule")'], "Schedule tab")
-            page.wait_for_timeout(4000)
-
-            frame = _loadscreen_frame(page)
-            if not frame:
-                log.error("MLSE: could not find the timesheet frame.")
-                MISSING.append("timesheet Schedule tab")
-                return result
-
-            seen_ranges = set()
-            for i in range(config.MLSE_MAX_PERIODS):
-                frame = _loadscreen_frame(page) or frame
-                try:
-                    range_text = frame.inner_text(".currentDateText")
-                except Exception:
-                    range_text = ""
-                p_start, p_end = _period_bounds(range_text)
-                if range_text in seen_ranges:
-                    break  # navigation didn't advance
-                seen_ranges.add(range_text)
-
-                rows = frame.evaluate(_GRID_JS)
-                added = 0
-                for r in rows:
-                    d = _row_to_date(r["date"], p_start, p_end)
-                    t = parse_clock(r["start"])
-                    if not d or not t:
-                        continue
-                    result[(d.isoformat(), t)] = {
-                        "venue_code": r["venue"],
-                        "venue": venue_full(r["venue"]),
-                        "department": r["department"],
-                        "job_class": r["job_class"],
-                        "event": r["event"],
-                        "start": r["start"],
-                        "end": r["end"],
-                    }
-                    added += 1
-                log.info("MLSE: period %s -> %d rows (%d usable)", range_text or "?", len(rows), added)
-
-                if p_end and p_end >= max_date:
+            for job in range(3):
+                if job > 0:
+                    log.info("MLSE: no scheduled shifts under job %d; trying job %d.",
+                             job, job + 1)
+                    MISSING.clear()
+                    page.goto(config.MLSE_PORTAL_URL, wait_until="networkidle", timeout=60000)
+                    if page.query_selector("#password"):
+                        _login(page, user, pw)
+                    page.wait_for_timeout(2000)
+                jobs = _open_my_calendar(ctx, page, job)
+                result.update(_read_schedule(ctx, page, max_date))
+                if result or job + 1 >= jobs:
                     break
-                # advance to the next period
-                if not _click_any(ctx, ['button[aria-label="Next Period"]', '.nextDateIcon'],
-                                  "Next Period"):
-                    break
-                page.wait_for_timeout(3500)
         finally:
             browser.close()
     log.info("MLSE: collected enrichment for %d shift slots.", len(result))
