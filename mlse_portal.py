@@ -71,17 +71,40 @@ _GRID_JS = """
     if (id && e.textContent.trim()) workDt[id] = e.textContent.trim();
   });
   const times = r => text(r).match(/\d{1,2}:\d{2}\s*(?:[ap]\.?\s*m\b)?/gi) || [];
-  return rows.map(r => {
+  // "Invalid value." is MLSE's text for an event code with no name stored.
+  const eventInfo = r => {
+    let name = '', code = '';
+    for (const e of r.querySelectorAll('[fieldmappingpolicy="MLSE_EVENT"]')) {
+      const v = val(e);
+      if (!v || /invalid value/i.test(v)) continue;
+      if (/^[0-9A-Z]{6,}$/.test(v)) { code = code || v; } else { name = name || v; }
+    }
+    return {name, code};
+  };
+  // Weekly layout: one row per event, a column per day ("Fri 10/30"), the
+  // time under the day it happens. The date comes from that column's header.
+  const DAY = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+\d{1,2}\/\d{1,2}$/;
+  const norm = e => (e.textContent || '').replace(/[\s\u200b]+/g, ' ').trim();
+  const dayHeaders = [...document.querySelectorAll('td,th,div,span')]
+    .filter(e => DAY.test(norm(e)) && ![...e.children].some(c => DAY.test(norm(c))))
+    .map(e => ({text: norm(e), rect: e.getBoundingClientRect()}));
+  const columnDate = el => {
+    const box = el.getBoundingClientRect();
+    const cx = box.left + box.width / 2;
+    let best = null;
+    for (const h of dayHeaders) {
+      if (h.rect.left - 2 <= cx && cx <= h.rect.right + 2 && h.rect.bottom <= box.top + 4
+          && (!best || h.rect.bottom > best.rect.bottom)) best = h;
+    }
+    return best ? best.text : '';
+  };
+  const out = [];
+  for (const r of rows) {
     const dt = r.querySelector('[name="work_dt"]');
-    const dateText = (dt ? dt.textContent.trim() : '')
-      || workDt[r.getAttribute('datarowid') || ''] || ''
-      || (text(r).match(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/) || [''])[0];
-    return {
-      date: dateText,
-      start: cell(r,'START_DTTM') || named(r, /(^|_)START(_|$)|START_?TIME/i) || times(r)[0] || '',
-      end: cell(r,'END_DTTM') || named(r, /(^|_)(END|STOP)(_|$)|END_?TIME/i) || times(r)[1] || '',
+    const ev = eventInfo(r);
+    const base = {
       venue: cell(r,'MLSE_VENUE'), department: cell(r,'MLSE_DEPARTMENT'),
-      job_class: cell(r,'MLSE_JOB_CLASS'), event: cell(r,'MLSE_EVENT'),
+      job_class: cell(r,'MLSE_JOB_CLASS'), event: ev.name, event_code: ev.code,
       debug: {
         fields: [...r.querySelectorAll('[fieldmappingpolicy]')]
           .map(e => (e.getAttribute('fieldmappingpolicy') || '') + '=' + val(e))
@@ -89,11 +112,33 @@ _GRID_JS = """
         text: text(r).replace(/\s+/g, ' ').trim().slice(0, 160),
         row: r.id, datarowid: r.getAttribute('datarowid'),
         date_cells_on_page: document.querySelectorAll('[name="work_dt"]').length,
-        prev_row: (r.previousElementSibling && text(r.previousElementSibling)
-                   .replace(/\s+/g, ' ').trim().slice(0, 80)) || '',
+        day_headers_on_page: dayHeaders.length,
       },
     };
-  }).filter(x => x.venue || x.event || x.start);
+    const rowDate = (dt ? dt.textContent.trim() : '')
+      || workDt[r.getAttribute('datarowid') || ''] || '';
+    if (rowDate) {  // one row per day: the date is in the row
+      out.push({...base, date: rowDate,
+        start: cell(r,'START_DTTM') || named(r, /(^|_)START(_|$)|START_?TIME/i) || times(r)[0] || '',
+        end: cell(r,'END_DTTM') || named(r, /(^|_)(END|STOP)(_|$)|END_?TIME/i) || times(r)[1] || ''});
+      continue;
+    }
+    // Weekly row: one shift per filled-in day cell.
+    const seen = new Set();
+    for (const s of r.querySelectorAll('[fieldmappingpolicy="START_DTTM"]')) {
+      const start = val(s);
+      const td = s.closest('td') || s;
+      if (!start || seen.has(td) || !s.getClientRects().length) continue;  // hidden copies
+      seen.add(td);
+      const e = td.querySelector('[fieldmappingpolicy="END_DTTM"]');
+      out.push({...base, date: columnDate(td), start, end: e ? val(e) : ''});
+    }
+    if (!seen.size && (base.venue || base.event || base.event_code)) {
+      out.push({...base, date: (text(r).match(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/) || [''])[0],
+                start: times(r)[0] || '', end: times(r)[1] || ''});
+    }
+  }
+  return out.filter(x => x.venue || x.event || x.event_code || x.start);
 }
 """
 
@@ -381,6 +426,7 @@ def _read_schedule(ctx, page, max_date):
                 "department": r["department"],
                 "job_class": r["job_class"],
                 "event": r["event"],
+                "event_code": r.get("event_code", ""),
                 "start": r["start"],
                 "end": r["end"],
             }
@@ -455,8 +501,8 @@ def classify_emoji(detail):
     if dept_emoji:
         return dept_emoji
     text = " ".join([
-        detail.get("event", ""), detail.get("venue", ""), detail.get("venue_code", ""),
-        detail.get("department", ""), detail.get("job_class", ""),
+        detail.get("event", ""), detail.get("event_code", ""), detail.get("venue", ""),
+        detail.get("venue_code", ""), detail.get("department", ""), detail.get("job_class", ""),
     ]).lower()
     if (any(k in text for k in ("marlies", "hockey", "nhl", "ahl", "leafs"))
             or re.search(r"\btml\b", text)):
@@ -475,9 +521,16 @@ def classify_emoji(detail):
     return "📅"
 
 
+def _fallback_event(detail):
+    """Title when MLSE has no name for the event ("Invalid value."): the
+    letters of its code, e.g. '2021MAVADO' -> 'MAVADO'."""
+    code = (detail.get("event_code") or "").strip()
+    return re.sub(r"^\d+", "", code) or code or "Shift"
+
+
 def build_summary(detail):
     """'<emoji>Event, start–end @CODE' (e.g. '⚽Canada v Bosnia, 9:30AM–6:15PM @BMO')."""
-    event = clean_event(detail.get("event", "")) or "Shift"
+    event = clean_event(detail.get("event", "")) or _fallback_event(detail)
     venue = detail.get("venue_code") or detail.get("venue", "")
     start, end = fmt_clock(detail.get("start", "")), fmt_clock(detail.get("end", ""))
     timing = f"{start}–{end}" if start and end else (start or end)
@@ -493,6 +546,8 @@ def build_description(detail):
     lines = ["Synced from the MLSE portal schedule."]
     if detail.get("event"):
         lines.append(f"Event: {detail['event']}")
+    elif detail.get("event_code"):
+        lines.append(f"Event code: {detail['event_code']} (MLSE has no name for this event yet)")
     if detail.get("venue"):
         v = detail["venue"]
         if detail.get("venue_code") and detail["venue_code"] != v:
