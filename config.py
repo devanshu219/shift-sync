@@ -102,4 +102,4 @@ ROGERS_SOURCE = "rogers"
 
 # Bump when the event title/description format changes; upcoming shifts are
 # then refreshed on the next run.
-ENRICH_VERSION = "1"
+ENRICH_VERSION = "2"

@@ -521,16 +521,24 @@ def classify_emoji(detail):
     return "📅"
 
 
-def _fallback_event(detail):
-    """Title when MLSE has no name for the event ("Invalid value."): the
-    letters of its code, e.g. '2021MAVADO' -> 'MAVADO'."""
-    code = (detail.get("event_code") or "").strip()
-    return re.sub(r"^\d+", "", code) or code or "Shift"
+# MLSE event codes are <digits><league><opponent>, e.g. 1006CFLMTL. MLSE stores
+# no name for some of them ("Invalid value."), so the name is built from the code.
+CODE_HOME_TEAM = {"NHL": "TML", "AHL": "Marlies", "CFL": "Argos", "MLS": "TFC", "NBA": "Raptors"}
+
+
+def name_from_code(code):
+    """'1101CFLPOF' -> 'Argos Playoff', '1006AHLHER' -> 'Marlies vs HER',
+    '2021MAVADO' -> 'MAVADO'."""
+    letters = re.sub(r"^\d+", "", (code or "").strip())
+    team, rest = CODE_HOME_TEAM.get(letters[:3]), letters[3:]
+    if not team or not rest:
+        return letters or (code or "").strip()
+    return f"{team} Playoff" if rest == "POF" else f"{team} vs {rest}"
 
 
 def build_summary(detail):
     """'<emoji>Event, start–end @CODE' (e.g. '⚽Canada v Bosnia, 9:30AM–6:15PM @BMO')."""
-    event = clean_event(detail.get("event", "")) or _fallback_event(detail)
+    event = clean_event(detail.get("event", "")) or name_from_code(detail.get("event_code")) or "Shift"
     venue = detail.get("venue_code") or detail.get("venue", "")
     start, end = fmt_clock(detail.get("start", "")), fmt_clock(detail.get("end", ""))
     timing = f"{start}–{end}" if start and end else (start or end)
@@ -547,7 +555,8 @@ def build_description(detail):
     if detail.get("event"):
         lines.append(f"Event: {detail['event']}")
     elif detail.get("event_code"):
-        lines.append(f"Event code: {detail['event_code']} (MLSE has no name for this event yet)")
+        lines.append(f"Event: {name_from_code(detail['event_code'])} "
+                     f"(from MLSE event code {detail['event_code']}; MLSE has no name for it)")
     if detail.get("venue"):
         v = detail["venue"]
         if detail.get("venue_code") and detail["venue_code"] != v:
