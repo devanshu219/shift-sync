@@ -86,7 +86,8 @@ _GRID_JS = """
   const DAY = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+\d{1,2}\/\d{1,2}$/;
   const norm = e => (e.textContent || '').replace(/[\s\u200b]+/g, ' ').trim();
   const dayHeaders = [...document.querySelectorAll('td,th,div,span')]
-    .filter(e => DAY.test(norm(e)) && ![...e.children].some(c => DAY.test(norm(c))))
+    .filter(e => DAY.test(norm(e)) && ![...e.children].some(c => DAY.test(norm(c)))
+                 && !e.closest('[name="work_dt"], .dateCell'))  // a row's own date, not a column
     .map(e => ({text: norm(e), rect: e.getBoundingClientRect()}));
   const columnDate = el => {
     const box = el.getBoundingClientRect();
@@ -97,6 +98,12 @@ _GRID_JS = """
           && (!best || h.rect.bottom > best.rect.bottom)) best = h;
     }
     return best ? best.text : '';
+  };
+  // A day's second shift has no date cell of its own (the first row's cell
+  // spans it), but every row carries the day as days since 1970 in work_dt.
+  const epochDate = r => {
+    const n = r.getAttribute('work_dt') || '';
+    return /^\d{4,6}$/.test(n) ? new Date(n * 86400000).toISOString().slice(0, 10) : '';
   };
   const out = [];
   for (const r of rows) {
@@ -116,7 +123,8 @@ _GRID_JS = """
       },
     };
     const rowDate = (dt ? dt.textContent.trim() : '')
-      || workDt[r.getAttribute('datarowid') || ''] || '';
+      || workDt[r.getAttribute('datarowid') || '']
+      || (dayHeaders.length ? '' : epochDate(r));  // weekly rows are dated by column
     if (rowDate) {  // one row per day: the date is in the row
       out.push({...base, date: rowDate,
         start: cell(r,'START_DTTM') || named(r, /(^|_)START(_|$)|START_?TIME/i) || times(r)[0] || '',
