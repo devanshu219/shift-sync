@@ -55,7 +55,6 @@ def check_calendar(service):
     try:
         meta = service.calendars().get(calendarId=cal_id).execute(num_retries=RETRIES)
         log.info("Using calendar %r.", meta.get("summary", cal_id))
-        return cal_id
     except HttpError as err:
         log.error(
             "Cannot reach your calendar (HTTP %s). Check two things: (1) the "
@@ -63,6 +62,32 @@ def check_calendar(service):
             "Settings > your calendar > Integrate calendar; (2) that calendar "
             "is shared with %s with 'Make changes to events'.",
             err.resp.status, service_account_email or "the service account email")
+        return None
+    role = _access_role(service, cal_id)
+    if role in ("reader", "freeBusyReader"):
+        log.error(
+            "Your calendar is shared with %s as view-only, so events can't be "
+            "added. In Google Calendar > Settings > your calendar > Share with "
+            "specific people, change that email's permission to 'Make changes "
+            "to events'.", service_account_email or "the service account email")
+        return None
+    return cal_id
+
+
+def _access_role(service, cal_id):
+    """The robot's permission on the calendar ('reader', 'writer', 'owner'...),
+    or None if Google won't say. A calendar shared with a service account isn't
+    always on its own calendar list yet, so add it there (only the robot sees
+    that list) to read the role."""
+    try:
+        try:
+            entry = service.calendarList().get(calendarId=cal_id).execute(num_retries=RETRIES)
+        except HttpError as err:
+            if err.resp.status != 404:
+                raise
+            entry = service.calendarList().insert(body={"id": cal_id}).execute(num_retries=RETRIES)
+        return entry.get("accessRole")
+    except HttpError:
         return None
 
 
