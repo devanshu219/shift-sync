@@ -105,6 +105,9 @@ _GRID_JS = """
     const n = r.getAttribute('work_dt') || '';
     return /^\d{4,6}$/.test(n) ? new Date(n * 86400000).toISOString().slice(0, 10) : '';
   };
+  // Daily layout: shift rows carry their own date labels. (A page can also hold
+  // a separate table of dates that look like weekly column headers.)
+  const dailyLayout = rows.some(r => r.querySelector('[name="work_dt"]'));
   const out = [];
   for (const r of rows) {
     const dt = r.querySelector('[name="work_dt"]');
@@ -127,7 +130,7 @@ _GRID_JS = """
       .filter(s => val(s) && s.getClientRects().length);
     const rowDate = (dt ? dt.textContent.trim() : '')
       || workDt[r.getAttribute('datarowid') || '']
-      || (dayHeaders.length || starts.length > 1 ? '' : epochDate(r));
+      || (starts.length > 1 || !(dailyLayout || !dayHeaders.length) ? '' : epochDate(r));
     if (rowDate) {  // one row per day: the date is in the row
       out.push({...base, date: rowDate,
         start: cell(r,'START_DTTM') || named(r, /(^|_)START(_|$)|START_?TIME/i) || times(r)[0] || '',
