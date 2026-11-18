@@ -87,7 +87,7 @@ _GRID_JS = """
   const norm = e => (e.textContent || '').replace(/[\s\u200b]+/g, ' ').trim();
   const dayHeaders = [...document.querySelectorAll('td,th,div,span')]
     .filter(e => DAY.test(norm(e)) && ![...e.children].some(c => DAY.test(norm(c)))
-                 && !e.closest('[name="work_dt"], .dateCell'))  // a row's own date, not a column
+                 && !e.closest('tr[id^="dataRow|"]'))  // a shift row's own date, not a column
     .map(e => ({text: norm(e), rect: e.getBoundingClientRect()}));
   const columnDate = el => {
     const box = el.getBoundingClientRect();
@@ -122,9 +122,12 @@ _GRID_JS = """
         day_headers_on_page: dayHeaders.length,
       },
     };
+    // A weekly row holds several days' shifts; its work_dt is only the week's start.
+    const starts = [...r.querySelectorAll('[fieldmappingpolicy="START_DTTM"]')]
+      .filter(s => val(s) && s.getClientRects().length);
     const rowDate = (dt ? dt.textContent.trim() : '')
       || workDt[r.getAttribute('datarowid') || '']
-      || (dayHeaders.length ? '' : epochDate(r));  // weekly rows are dated by column
+      || (dayHeaders.length || starts.length > 1 ? '' : epochDate(r));
     if (rowDate) {  // one row per day: the date is in the row
       out.push({...base, date: rowDate,
         start: cell(r,'START_DTTM') || named(r, /(^|_)START(_|$)|START_?TIME/i) || times(r)[0] || '',
