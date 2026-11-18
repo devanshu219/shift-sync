@@ -380,6 +380,11 @@ def sync_mlse(service, calendar_id):
         diag = mlse_portal.DIAG
         seen = (f"jobs offered: {diag.get('jobs', '?')}; pay periods read: "
                 f"{diag.get('periods', 0)}; page held: {diag.get('page', 'n/a')}")
+        if diag.get("per_period"):
+            seen += f"; {'; '.join(diag['per_period'])}"
+        if diag.get("undated"):
+            seen += (f"; {diag['undated']} row(s) had no readable date, e.g. "
+                     f"{diag.get('undated_sample')}")
         if diag.get("sample"):
             seen += f"; rows looked like: {diag['sample']}"
         log.error("No event details added: %s. Retried next run. (%s)", why, seen)

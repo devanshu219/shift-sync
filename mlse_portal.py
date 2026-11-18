@@ -120,7 +120,7 @@ _GRID_JS = """
           .map(e => (e.getAttribute('fieldmappingpolicy') || '') + '=' + val(e))
           .filter(x => !x.endsWith('=')).slice(0, 15),
         text: text(r).replace(/\s+/g, ' ').trim().slice(0, 160),
-        row: r.id, datarowid: r.getAttribute('datarowid'),
+        row: r.id, datarowid: r.getAttribute('datarowid'), work_dt: r.getAttribute('work_dt'),
         date_cells_on_page: document.querySelectorAll('[name="work_dt"]').length,
         day_headers_on_page: dayHeaders.length,
       },
@@ -447,12 +447,13 @@ def _read_schedule(ctx, page, max_date):
             added += 1
         log.info("MLSE: period %s -> %d rows (%d usable)", range_text or "?", len(rows), added)
         DIAG["periods"] = DIAG.get("periods", 0) + 1
+        DIAG.setdefault("per_period", []).append(f"{range_text or '?'}: {added} of {len(rows)} rows dated")
         if rows and not added and "sample" not in DIAG:
             DIAG["sample"] = [{"date": r["date"], "start": r["start"], "end": r["end"],
                                **r.get("debug", {})} for r in rows[:2]]
             log.info("MLSE: rows found but dates/times not understood; sample: %s",
                      DIAG["sample"])
-        if not rows:
+        if not rows or "page" not in DIAG:  # which kinds of rows the page holds
             try:
                 DIAG["page"] = frame.evaluate(_PANELS_JS)
                 log.info("MLSE: timesheet rows on this page: %s", DIAG["page"])
